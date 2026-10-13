@@ -1,0 +1,31 @@
+{
+  "trials": 100,
+  "duration_s": 0.1,
+  "eb_n0_db": -7,
+  "carrier_tolerance_hz": 20,
+  "rate_tolerance_hz_per_s": 200,
+  "fd_test_range_hz": [
+    -45000,
+    45000
+  ],
+  "rate_test_range_hz_per_s": [
+    -900,
+    900
+  ],
+  "carrier_success": 1.0,
+  "rate_success": 1.0,
+  "joint_success": 1.0,
+  "joint_wilson_95": [
+    0.9630051925239981,
+    0.9999999999999999
+  ],
+  "frequency_rmse_hz": 0.35108257179766167,
+  "rate_rmse_hz_per_s": 27.782213896532742,
+  "assumptions": [
+    "ideal known-code and bit-boundary synchronization",
+    "complex baseband equivalence, not original real-passband pipeline",
+    "unknown independent BPSK bits",
+    "AWGN; constant amplitude; linear Doppler",
+    "no code-rate Doppler, multipath, oscillator drift, or jerk"
+  ]
+}
