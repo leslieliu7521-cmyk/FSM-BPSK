@@ -1,0 +1,74 @@
+[
+  {
+    "f_true_hz": 50000.00060483871,
+    "rate_true_hz_s": -1000.0,
+    "eb_n0_db": null,
+    "coarse_f_hz": 50000.0,
+    "coarse_rate_hz_s": -1000.0,
+    "fine_f_hz": 50000.00123265224,
+    "fine_rate_hz_s": -998.5274928212566,
+    "fine_f_error_hz": 0.0006278135333559476,
+    "fine_rate_error_hz_s": 1.472507178743399,
+    "converged": true
+  },
+  {
+    "f_true_hz": 149998.99939576612,
+    "rate_true_hz_s": 999.0,
+    "eb_n0_db": null,
+    "coarse_f_hz": 149998.47412109375,
+    "coarse_rate_hz_s": 1000.0,
+    "fine_f_hz": 149999.00002089696,
+    "fine_rate_hz_s": 998.3050002042221,
+    "fine_f_error_hz": 0.0006251308368518949,
+    "fine_rate_error_hz_s": -0.6949997957779033,
+    "converged": true
+  },
+  {
+    "f_true_hz": 100173.69974965726,
+    "rate_true_hz_s": 413.9,
+    "eb_n0_db": null,
+    "coarse_f_hz": 100173.9501953125,
+    "coarse_rate_hz_s": 400.0,
+    "fine_f_hz": 100173.69845901124,
+    "fine_rate_hz_s": 414.0384866145911,
+    "fine_f_error_hz": -0.0012906460178783163,
+    "fine_rate_error_hz_s": 0.1384866145911019,
+    "converged": true
+  },
+  {
+    "f_true_hz": 76543.20052808468,
+    "rate_true_hz_s": -873.1,
+    "eb_n0_db": -7,
+    "coarse_f_hz": 76542.66357421875,
+    "coarse_rate_hz_s": -900.0,
+    "fine_f_hz": 76542.9897306806,
+    "fine_rate_hz_s": -880.9058669346862,
+    "fine_f_error_hz": -0.21079740408458747,
+    "fine_rate_error_hz_s": -7.805866934686151,
+    "converged": true
+  },
+  {
+    "f_true_hz": 123456.69955762096,
+    "rate_true_hz_s": 731.4,
+    "eb_n0_db": -7,
+    "coarse_f_hz": 123455.810546875,
+    "coarse_rate_hz_s": 700.0,
+    "fine_f_hz": 123456.54936237671,
+    "fine_rate_hz_s": 744.2924529533888,
+    "fine_f_error_hz": -0.1501952442486072,
+    "fine_rate_error_hz_s": 12.892452953388783,
+    "converged": true
+  },
+  {
+    "f_true_hz": 143210.3003212903,
+    "rate_true_hz_s": -531.2,
+    "eb_n0_db": -7,
+    "coarse_f_hz": 143209.8388671875,
+    "coarse_rate_hz_s": -500.0,
+    "fine_f_hz": 143210.0241410563,
+    "fine_rate_hz_s": -536.2759256159053,
+    "fine_f_error_hz": -0.2761802340100985,
+    "fine_rate_error_hz_s": -5.075925615905248,
+    "converged": true
+  }
+]

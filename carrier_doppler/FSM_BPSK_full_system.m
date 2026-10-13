@@ -1,325 +1,430 @@
-%% Full real-passband DSSS-BPSK carrier/Doppler simulation
-% MATLAB R2018b+ and Signal Processing Toolbox (resample, fir1).
-% Self-contained: no external mseq.m or estimator file is required.
-% Known PN, exact code/bit timing; unknown random data; AWGN; linear Doppler.
-% Includes NO code-rate Doppler, multipath, jerk or oscillator drift.
-% 100 ms results apply to these assumptions, not complete acquisition.
-% The included Gold pair uses an explicit convention; it does not claim
-% to reproduce the missing original mseq.m convention.
+%% REAL DSSS-BPSK: FREQUENCY-DOMAIN FSM carrier and Doppler-rate estimation
+% Self-contained, MATLAB R2018b+, Signal Processing Toolbox.
+% CORE: frame FFT -> shifted spectral cross-products Xp*conj(Xm) ->
+% COMPLEX frame average -> frequency smoothing -> cyclic spectrum metric.
+% No signal squaring and no decision-directed data supplied to receiver.
+% Nonzero rate uses polynomial-phase compensation before the frame FFTs.
+% Default known-PN preprocessing; exact sync baseline and separate mismatch
+% scenarios. These are not a full unknown-code acquisition receiver.
 clear; clc; close all; rng(20261014,'twister');
 
-%% 1. User parameters
-Rb=1e5; Rc=31*Rb; fs=24.8e6; Ns=fs/Rc;
-Tobs=0.1;                         % 100 ms; do not merely extend a plotting axis
-fc_nominal=1e5;                   % independently known receiver IF, Hz
-EbN0_dB=[-10 -7 -4];             % INFORMATION-bit Eb/N0, not sample SNR
-numMonte=100;                    % independent bits, phase, Doppler and noise
-plot_EbN0=-7;
-fd_test_max=45000;               % random midpoint Doppler within +/-45 kHz
-rate_test_max=900;               % random linear frequency rate within +/-900 Hz/s
-frequency_tolerance_hz=20;
-rate_tolerance_hz_per_s=200;
-saveResults=true;               % MAT, CSV, PNG and FIG in timestamped directory
-cfg.outFs=4e5; cfg.bandwidthHz=9e4;
-cfg.fRange=[-5e4 5e4];           % fixed receiver prior, never centered at truth
-cfg.rateRange=[-1000 1000];
-cfg.rateStep=100;                % suitable scale <=1/Tobs^2; refine continuously
-assert(exist('resample','file')~=0 && exist('fir1','file')~=0, ...
-    'Install/enable Signal Processing Toolbox.');
-assert(Ns==round(Ns) && fs/Rb==round(fs/Rb));
-assert(abs(Rb*Tobs-round(Rb*Tobs))<1e-8 && Tobs>=0.001);
-assert(any(EbN0_dB==plot_EbN0));
-assert(fd_test_max<max(cfg.fRange) && rate_test_max<max(cfg.rateRange));
-assert(fc_nominal-fd_test_max-rate_test_max*Tobs/2>0);
-assert(cfg.bandwidthHz<cfg.outFs/2);
+%% Configuration: full is a long statistical experiment; quick is a smoke run
+run_mode='full';                 % 'full': 1000/condition; 'quick': 10/condition
+cfg.Rb=1e5; cfg.Rc=31e5; cfg.fs=24.8e6; cfg.fc=1e5;
+cfg.T=.1; cfg.scfFs=8e5; cfg.L=128; cfg.hop=64;
+cfg.confirmCandidates=5;          % exact FSM confirmation before local refinement
+cfg.smoothingBins=17;            % spectral smoothing width, 17*6250 Hz
+cfg.fRange=[50e3 150e3];         % fixed received-frequency prior, NO truth input
+cfg.rateRange=[-1000 1000]; cfg.rateStep=100;
+cfg.fTolerance=20; cfg.rateTolerance=200;
+cfg.fdTest=45000; cfg.rateTest=900;
+cfg.useKnownPN=true;             % false: separate RAW FSM baseline, no PN wipeoff
+cfg.rxPhaseChip=0; cfg.rxRatePPM=0; cfg.jerk=0;
+cfg.rawDisplaySeconds=60e-6;
+EbN0_dB=[-10 -8 -7 -6 -4];
+duration_list=[.001 .01 .05 .1];
+fd_edges=[-45000 -30000 -15000 0 15000 30000 45000];
+rate_edges=[-900 -600 -300 0 300 600 900];
+if strcmp(run_mode,'full'); numMonte=1000; else; numMonte=10; end
+numAux=numMonte;
+assert(any(strcmp(run_mode,{'full','quick'})));
+assert(exist('resample','file')~=0,'Signal Processing Toolbox required.');
+assert(cfg.fs/cfg.scfFs==round(cfg.fs/cfg.scfFs));
+assert(mod(cfg.smoothingBins,2)==1 && cfg.smoothingBins<cfg.L);
+assert(cfg.fRange(2)+(cfg.smoothingBins-1)/2*cfg.scfFs/cfg.L<cfg.scfFs/2);
+code=make_gold();
+outputDir=fullfile(pwd,['FSM_frequency_results_' datestr(now,'yyyymmdd_HHMMSS')]);
+baseOutput=outputDir; suffix=1;
+while exist(outputDir,'dir')
+    outputDir=[baseOutput '_' num2str(suffix)]; suffix=suffix+1;
+end
+mkdir(outputDir);
+fprintf('Mode %s: %d independent trials/condition; long runs may take hours.\n',run_mode,numMonte);
+fprintf('RAW fs %.2f MHz; FSM fs %.2f MHz; FFT df %.1f Hz; frame %.3f ms.\n', ...
+    cfg.fs/1e6,cfg.scfFs/1e6,cfg.scfFs/cfg.L,1e3*cfg.L/cfg.scfFs);
+fprintf('-7 dB Eb/N0 -> real sample SNR %.3f dB.\n',-7+10*log10(2*cfg.Rb/cfg.fs));
+fprintf('Core is rate-compensated ordinary FSM cyclic spectrum; no BPSK/QPSK classifier.\n');
 
-%% 2. Gold spreading code, chip sampling and time convention
-% Primitive preferred pair x^5+x^2+1 and x^5+x^4+x^3+x^2+1.
-% Recurrence/seed explicitly defined below; shift convention is explicit.
-m1=local_mseq([0 2]); m2=local_mseq([0 2 3 4]);
-gold_bits=xor(logical(m1),circshift(logical(m2),[0 1]));
-gold=2*double(gold_bits)-1; L=numel(gold);
-assert(L==31 && Rc==L*Rb);
-numBits=round(Rb*Tobs); N=numBits*L*Ns;
-t0=(0:N-1)/fs; record_mid=(N-1)/(2*fs); tc=t0-record_mid;
-% Exactly synchronized receiver PN contains NO information data.
-pn_chips=repmat(gold,1,numBits);
-pn_sample=repelem(pn_chips,Ns);
-sample_snr_dB=EbN0_dB+10*log10(2*Rb/fs);
-fprintf('N=%d, T=%.3f ms, bits=%d, samples/chip=%d\n',N,1e3*Tobs,numBits,Ns);
-fprintf('Eb/N0=-7 dB corresponds to sample SNR %.3f dB (real AWGN).\n', ...
-    -7+10*log10(2*Rb/fs));
-fprintf('Independent MC: %d runs per Eb/N0; this may take several minutes.\n',numMonte);
+%% A. Noiseless range AND boundary scan, off-grid frequencies and rates
+scan_f=[50000 50037.7 100173.7 149963.3 150000];
+scan_a=[-1000 -873.1 0 731.4 1000];
+scan=[];
+for f=scan_f
+    for a=scan_a
+        [row,~]=one_trial(cfg,code,Inf,f-cfg.fc,a,false);
+        scan=[scan;row]; %#ok<AGROW>
+    end
+end
+scan_table=rows_table(scan); writetable(scan_table,fullfile(outputDir,'noiseless_scan.csv'));
+fprintf('Noiseless scan maximum final |f error| %.4f Hz, |rate error| %.4f Hz/s.\n', ...
+    max(abs(scan(:,9))),max(abs(scan(:,10))));
 
-%% 3. Noiseless diagnostic, including off-grid truth
-[~,~,~,clean0]=transmit_record(numBits,gold,Ns,tc,fc_nominal,17321.7,413.9,0.83);
-e0=receiver_estimate(clean0,pn_sample,fs,fc_nominal,cfg,false);
-truth0=17321.7+413.9*(e0.reference_time_s-record_mid);
-fprintf('Noiseless check: frequency bias %.6f Hz; rate bias %.6f Hz/s\n', ...
-    e0.doppler_mid_hz-truth0,e0.rate_hz_per_s-413.9);
-clear clean0;
-
-%% 4. Full independent Monte Carlo channel and receiver
-K=numel(EbN0_dB); error_frequency=zeros(K,numMonte);
-error_rate=zeros(K,numMonte); true_frequency=zeros(K,numMonte);
-true_rate=zeros(K,numMonte); hat_frequency=zeros(K,numMonte);
-hat_rate=zeros(K,numMonte); solver_ok=false(K,numMonte);
-demo=struct();
-for k=1:K
+%% B. Independent Eb/N0 sweep: preserve every coarse and fine result
+all_rows=cell(numel(EbN0_dB),1); summary_rows=[]; demo=struct();
+for k=1:numel(EbN0_dB)
+    rows=zeros(numMonte,13);
     for mc=1:numMonte
-        fd_mid=(2*rand-1)*fd_test_max;
-        rate=(2*rand-1)*rate_test_max;
-        phase=2*pi*rand;
-        % Random bits -> spreading -> rectangular chip sampling -> REAL BPSK.
-        % Phase includes Doppler from the propagation channel. Equivalent to
-        % received passband cos(2*pi*(fc+fd_mid)*tc+pi*rate*tc^2+phase).
-        [bits,spread_chips,spread_sample,clean]=transmit_record( ...
-            numBits,gold,Ns,tc,fc_nominal,fd_mid,rate,phase);
-        signal_power=mean(clean.^2);
-        % Real AWGN with two-sided PSD N0/2; Eb=signal_power/Rb.
-        noise_variance=signal_power*fs/(2*Rb*10^(EbN0_dB(k)/10));
-        noise=sqrt(noise_variance)*randn(1,N);
-        rx=clean+noise;
-        keep=(EbN0_dB(k)==plot_EbN0 && mc==1);
-        est=receiver_estimate(rx,pn_sample,fs,fc_nominal,cfg,keep);
-        % Always compare frequency at the same observation reference time.
-        fd_at_reference=fd_mid+rate*(est.reference_time_s-record_mid);
-        true_frequency(k,mc)=fc_nominal+fd_at_reference;
-        true_rate(k,mc)=rate;
-        hat_frequency(k,mc)=est.carrier_mid_hz;
-        hat_rate(k,mc)=est.rate_hz_per_s;
-        error_frequency(k,mc)=est.doppler_mid_hz-fd_at_reference;
-        error_rate(k,mc)=est.rate_hz_per_s-rate;
-        solver_ok(k,mc)=est.optimizer_converged;
-        if keep
-            demo.bits=bits(1:min(12,numBits)); demo.gold=gold;
-            nshow=min(N,round(60e-6*fs));
-            demo.t_us=t0(1:nshow)*1e6;
-            demo.data_samples=bits(floor((0:nshow-1)/(fs/Rb))+1);
-            demo.spread_chips=spread_chips(1:min(186,numel(spread_chips)));
-            demo.pn=pn_sample(1:nshow); demo.spread=spread_sample(1:nshow);
-            demo.tx=spread_sample(1:nshow).*cos(2*pi*fc_nominal*tc(1:nshow));
-            demo.clean=clean(1:nshow); demo.noise=noise(1:nshow); demo.rx=rx(1:nshow);
-            demo.fd_mid=fd_mid; demo.rate=rate; demo.phase=phase;
-            demo.noise_variance=noise_variance;
-            demo.measured_snr_dB=10*log10(signal_power/mean(noise.^2));
-            demo.est=est; demo.record_mid=record_mid;
-        end
-        if mod(mc,10)==0 || mc==numMonte
-            fprintf('Eb/N0=%g dB, trial %d/%d\n',EbN0_dB(k),mc,numMonte);
+        fd=(2*rand-1)*cfg.fdTest; a=(2*rand-1)*cfg.rateTest;
+        keep=EbN0_dB(k)==-7 && mc==1;
+        [rows(mc,:),detail]=one_trial(cfg,code,EbN0_dB(k),fd,a,keep);
+        if keep; demo=detail; end
+        if mod(mc,25)==0 || mc==numMonte
+            fprintf('Eb/N0 %g: %d/%d\n',EbN0_dB(k),mc,numMonte);
         end
     end
+    all_rows{k}=rows;
+    writetable(rows_table(rows),fullfile(outputDir,sprintf('trials_EbN0_%g.csv',EbN0_dB(k))));
+    summary_rows=[summary_rows;EbN0_dB(k) summarize(rows,cfg)]; %#ok<AGROW>
+    % Checkpoint every condition; interrupted runs retain completed results.
+    save(fullfile(outputDir,'checkpoint.mat'),'cfg','EbN0_dB','all_rows','summary_rows','scan','demo');
 end
-clear rx clean noise spread_sample spread_chips bits;
+summary=summary_table(summary_rows,'EbN0_dB'); disp(summary);
+writetable(summary,fullfile(outputDir,'EbN0_summary.csv'));
+j=find(EbN0_dB==-7,1); target_rows=all_rows{j};
 
-%% 5. Success, RMSE, bias, standard deviation and confidence intervals
-pass_f=abs(error_frequency)<=frequency_tolerance_hz;
-pass_r=abs(error_rate)<=rate_tolerance_hz_per_s;
-% Optimizer failure is counted as failure, not silently removed.
-pass_joint=pass_f & pass_r & solver_ok;
-rate_f=mean(pass_f,2); rate_r=mean(pass_r,2); rate_joint=mean(pass_joint,2);
-[ci_low,ci_high]=wilson_interval(sum(pass_joint,2),numMonte);
-rmse_f=sqrt(mean(error_frequency.^2,2)); rmse_r=sqrt(mean(error_rate.^2,2));
-bias_f=mean(error_frequency,2); bias_r=mean(error_rate,2);
-std_f=std(error_frequency,0,2); std_r=std(error_rate,0,2);
-summary_table=table(EbN0_dB(:),sample_snr_dB(:),rate_f,rate_r,rate_joint, ...
-    ci_low,ci_high,rmse_f,rmse_r,bias_f,bias_r,std_f,std_r,sum(solver_ok,2), ...
-    'VariableNames',{'EbN0_dB','SampleSNR_dB','CarrierSuccess','RateSuccess', ...
-    'JointSuccess','JointCI95Lower','JointCI95Upper','CarrierRMSE_Hz', ...
-    'RateRMSE_HzPerS','CarrierBias_Hz','RateBias_HzPerS','CarrierStd_Hz', ...
-    'RateStd_HzPerS','ConvergedTrials'});
-disp(summary_table);
-j=find(EbN0_dB==plot_EbN0,1);
-fprintf('At %g dB Eb/N0: joint success %.2f%%; 95%% CI [%.2f%% %.2f%%].\n', ...
-    plot_EbN0,100*rate_joint(j),100*ci_low(j),100*ci_high(j));
-fprintf('Acceptance: carrier <=%g Hz AND rate <=%g Hz/s; nonconvergence fails.\n', ...
-    frequency_tolerance_hz,rate_tolerance_hz_per_s);
-if ci_low(j)>0.9
-    fprintf('This run supports >90%% under the configured model and thresholds.\n');
+%% C. Group by TRUE frequency offset/rate; include counts AND Wilson intervals
+frequency_groups=group_stats(target_rows,target_rows(:,1)-cfg.fc,fd_edges,cfg);
+rate_groups=group_stats(target_rows,target_rows(:,2),rate_edges,cfg);
+writetable(frequency_groups,fullfile(outputDir,'frequency_groups_minus7.csv'));
+writetable(rate_groups,fullfile(outputDir,'rate_groups_minus7.csv'));
+
+%% D. Observation duration comparison; reuse the identical 100 ms baseline
+length_rows=[];
+for duration=duration_list
+    c=cfg; c.T=duration;
+    if duration==cfg.T
+        rows=target_rows;
+    else
+        rows=zeros(numAux,13);
+        for mc=1:numAux
+            [rows(mc,:),~]=one_trial(c,code,-7,(2*rand-1)*c.fdTest,(2*rand-1)*c.rateTest,false);
+        end
+        writetable(rows_table(rows),fullfile(outputDir,sprintf('duration_%g_ms_trials.csv',1000*duration)));
+    end
+    length_rows=[length_rows;duration*1000 summarize(rows,c)]; %#ok<AGROW>
+    fprintf('Duration %.1f ms complete.\n',duration*1000);
+end
+length_summary=summary_table(length_rows,'Duration_ms');
+writetable(length_summary,fullfile(outputDir,'duration_summary.csv'));
+
+%% E. One-factor-at-a-time sensitivity at -7 dB; never pool with ideal baseline
+% Relative receiver-code phase, code-rate mismatch, nonlinear phase model.
+scenario_names={'IdealSync','Phase_0p125_chip','Phase_0p5_chip','Phase_1_chip', ...
+    'Rate_1_ppm','Rate_5_ppm','Rate_25_ppm','Jerk_1000','Jerk_5000','RawFSM_BandlimitedNoPN'};
+phase_chip=[0 .125 .5 1 0 0 0 0 0 0];
+rate_ppm=[0 0 0 0 1 5 25 0 0 0];
+jerk_values=[0 0 0 0 0 0 0 1000 5000 0];
+scenario_values=[]; scenario_data=cell(numel(scenario_names),1);
+for s=1:numel(scenario_names)
+    c=cfg; c.rxPhaseChip=phase_chip(s); c.rxRatePPM=rate_ppm(s); c.jerk=jerk_values(s);
+    if s==numel(scenario_names); c.useKnownPN=false; end
+    if s==1; rows=target_rows;
+    else
+        rows=zeros(numAux,13);
+        for mc=1:numAux
+            [rows(mc,:),~]=one_trial(c,code,-7,(2*rand-1)*c.fdTest,(2*rand-1)*c.rateTest,false);
+        end
+        writetable(rows_table(rows),fullfile(outputDir,[scenario_names{s} '_trials.csv']));
+    end
+    scenario_data{s}=rows;
+    scenario_values=[scenario_values;s summarize(rows,c)]; %#ok<AGROW>
+    fprintf('Sensitivity %s complete.\n',scenario_names{s});
+end
+scenario_summary=summary_table(scenario_values,'ScenarioIndex');
+scenario_summary.Scenario=scenario_names(:);
+writetable(scenario_summary,fullfile(outputDir,'sensitivity_summary.csv'));
+
+%% F. Figures: data/channel, ACTUAL cyclic spectrum, coarse/fine statistics
+figs=gobjects(9,1);
+figs(1)=figure('Name','Signal chain: random data to real AWGN received','Color','w');
+subplot(3,2,1); stairs(demo.t_us,demo.data); title('Random data'); ylim([-1.3 1.3]); grid on;
+subplot(3,2,2); stairs(0:30,code); title('Known Gold chips'); grid on;
+subplot(3,2,3); plot(demo.t_us,demo.spread); title('Spread and sampled +/-1'); grid on;
+subplot(3,2,4); plot(demo.t_us,demo.tx); title('Transmitted real BPSK'); grid on;
+subplot(3,2,5); plot(demo.t_us,demo.clean); title('Doppler channel before noise'); grid on;
+subplot(3,2,6); plot(demo.t_us,demo.rx); title('-7 dB Eb/N0 (not sample SNR)'); grid on;
+for ax=findall(figs(1),'Type','axes').'; xlabel(ax,'Time (us), except chip panel'); end
+
+figs(2)=figure('Name','Ordinary FSM cyclic spectrum and frequency smoothing','Color','w');
+D=demo.est.detail; local_alpha=D.alpha_axis;
+subplot(2,2,[1 2]); surf(D.f_axis/1e3,local_alpha/1e3,abs(D.Smap),'EdgeColor','none');
+xlabel('Spectral frequency f (kHz)'); ylabel('Cyclic frequency alpha=2fc (kHz)');
+zlabel('|S_x^{alpha}(f)| (power/Hz)'); title('FFT cross-products, complex frame averaging; rate compensated');
+view(45,35); colorbar; grid on;
+subplot(2,2,3); plot(D.f_axis/1e3,abs(D.Sfine),'LineWidth',1.2); hold on;
+plot(D.f_axis/1e3,abs(D.SfineSmoothed),'LineWidth',1.2);
+xlabel('Spectral frequency f (kHz)'); ylabel('Cyclic spectrum magnitude');
+legend('Before frequency smoothing','After frequency smoothing'); grid on;
+subplot(2,2,4); plot(local_alpha/2,abs(D.Smap(:,cfg.L/2+1)).^2,'o-');
+hold on; xline(demo.truthF,'k--'); xline(demo.est.fFine,'r--');
+xlabel('Received carrier candidate alpha/2 (Hz)'); ylabel('FSM score |S(0)|^2'); grid on;
+
+figs(3)=figure('Name','Coarse joint FSM search and fitted Doppler','Color','w');
+subplot(2,2,[1 2]); surf(D.coarseF/1e3,D.coarseRates,D.coarseMetric,'EdgeColor','none');
+xlabel('Received carrier (kHz)'); ylabel('Rate (Hz/s)'); zlabel('Normalized coarse FSM score');
+title('Global fixed-prior search, display zoom near selected peak'); view(45,35); colorbar;
+subplot(2,2,3); tl=linspace(0,cfg.T,500); tr=tl-demo.rawReference;
+ftrue=cfg.fc+demo.fd+demo.rate*tr+.5*cfg.jerk*tr.^2;
+fhat=demo.est.fFine+demo.est.aFine*(tl-demo.est.reference);
+plot(tl*1000,ftrue-cfg.fc,'k',tl*1000,fhat-cfg.fc,'r--');
+xlabel('Time (ms)'); ylabel('Doppler (Hz)'); legend('True','Estimated linear model'); grid on;
+subplot(2,2,4); plot(tl*1000,fhat-ftrue); xlabel('Time (ms)'); ylabel('Model frequency error (Hz)'); grid on;
+
+figs(4)=figure('Name','Coarse vs fine success and confidence','Color','w');
+subplot(1,2,1); errorbar(summary.EbN0_dB,100*summary.CoarseJoint, ...
+    100*(summary.CoarseJoint-summary.CoarseLo),100*(summary.CoarseHi-summary.CoarseJoint),'o-'); hold on;
+errorbar(summary.EbN0_dB,100*summary.FineJoint,100*(summary.FineJoint-summary.FineLo), ...
+    100*(summary.FineHi-summary.FineJoint),'s-'); yline(90,'k--'); ylim([0 105]);
+xlabel('Information Eb/N0 (dB)'); ylabel('Joint success (%)'); legend('Coarse','Fine','90% target'); grid on;
+subplot(1,2,2); plot(summary.EbN0_dB,100*summary.StrictFrequencyWin,'o-', ...
+    summary.EbN0_dB,100*summary.StrictRateWin,'s-');
+xlabel('Eb/N0 (dB)'); ylabel('Strict fine improvement (%)');
+legend('|Fine f error| < |Coarse f error|','|Fine rate error| < |Coarse rate error|'); grid on;
+title('This win fraction is NOT estimation success');
+
+figs(5)=figure('Name','Coarse/fine RMSE and biases','Color','w');
+subplot(2,2,1); semilogy(EbN0_dB,max(summary.CoarseF_RMSE,eps),'o-',EbN0_dB,max(summary.FineF_RMSE,eps),'s-');
+ylabel('Frequency RMSE (Hz)'); legend('Coarse','Fine'); grid on;
+subplot(2,2,2); semilogy(EbN0_dB,max(summary.CoarseRate_RMSE,eps),'o-',EbN0_dB,max(summary.FineRate_RMSE,eps),'s-');
+ylabel('Rate RMSE (Hz/s)'); legend('Coarse','Fine'); grid on;
+subplot(2,2,3); errorbar(EbN0_dB,summary.FineF_Bias,summary.FineF_Std,'o-');
+ylabel('Fine f bias +/- std (Hz)'); grid on;
+subplot(2,2,4); errorbar(EbN0_dB,summary.FineRate_Bias,summary.FineRate_Std,'o-');
+ylabel('Fine rate bias +/- std (Hz/s)'); grid on;
+for ax=findall(figs(5),'Type','axes').'; xlabel(ax,'Eb/N0 (dB)'); end
+
+figs(6)=figure('Name','Frequency/rate stratified performance at -7 dB','Color','w');
+subplot(2,2,1); plot_groups(frequency_groups); xlabel('True Doppler bin center (Hz)'); ylabel('Fine joint success (%)');
+subplot(2,2,2); plot_groups(rate_groups); xlabel('True rate bin center (Hz/s)'); ylabel('Fine joint success (%)');
+subplot(2,2,3); bar(frequency_groups.Center,frequency_groups.Count); xlabel('Doppler bin center (Hz)'); ylabel('Independent trials'); grid on;
+subplot(2,2,4); bar(rate_groups.Center,rate_groups.Count); xlabel('Rate bin center (Hz/s)'); ylabel('Independent trials'); grid on;
+
+figs(7)=figure('Name','Duration tradeoff and sensitivity','Color','w');
+subplot(2,2,1); errorbar(length_summary.Duration_ms,100*length_summary.FineJoint, ...
+    100*(length_summary.FineJoint-length_summary.FineLo),100*(length_summary.FineHi-length_summary.FineJoint),'o-');
+xlabel('Observation (ms)'); ylabel('Joint success (%)'); ylim([0 105]); grid on;
+subplot(2,2,2); semilogy(length_summary.Duration_ms,max(length_summary.FineF_RMSE,eps),'o-');
+xlabel('Observation (ms)'); ylabel('Frequency RMSE (Hz)'); grid on;
+subplot(2,2,[3 4]); bar(100*scenario_summary.FineJoint);
+set(gca,'XTick',1:numel(scenario_names),'XTickLabel',scenario_names); xtickangle(35);
+ylabel('Fine joint success (%)'); ylim([0 105]); grid on;
+
+figs(8)=figure('Name','Noiseless parameter scan: finite-record bias','Color','w');
+subplot(1,2,1); scatter3(scan(:,1)/1e3,scan(:,2),scan(:,9),40,scan(:,9),'filled');
+xlabel('True carrier (kHz)'); ylabel('True rate (Hz/s)'); zlabel('Fine f bias (Hz)'); grid on; colorbar;
+subplot(1,2,2); scatter3(scan(:,1)/1e3,scan(:,2),scan(:,10),40,scan(:,10),'filled');
+xlabel('True carrier (kHz)'); ylabel('True rate (Hz/s)'); zlabel('Fine rate bias (Hz/s)'); grid on; colorbar;
+
+figs(9)=figure('Name','Independent errors at -7 dB: keep failed trials','Color','w');
+subplot(2,2,1); histogram(target_rows(:,7),25); hold on; histogram(target_rows(:,9),25);
+xlabel('Frequency error (Hz)'); legend('Coarse','Fine'); grid on;
+subplot(2,2,2); histogram(target_rows(:,8),25); hold on; histogram(target_rows(:,10),25);
+xlabel('Rate error (Hz/s)'); legend('Coarse','Fine'); grid on;
+subplot(2,2,3); scatter(target_rows(:,1)/1e3,target_rows(:,5)/1e3,20,'filled');
+xlabel('True carrier (kHz)'); ylabel('Fine estimate (kHz)'); grid on;
+subplot(2,2,4); scatter(target_rows(:,2),target_rows(:,6),20,'filled');
+xlabel('True rate (Hz/s)'); ylabel('Fine estimate (Hz/s)'); grid on;
+for i=1:numel(figs)
+    savefig(figs(i),fullfile(outputDir,sprintf('figure_%02d.fig',i)));
+    print(figs(i),fullfile(outputDir,sprintf('figure_%02d.png',i)),'-dpng','-r150');
+end
+save(fullfile(outputDir,'results.mat'),'cfg','run_mode','summary','scan_table','all_rows', ...
+    'frequency_groups','rate_groups','length_summary','scenario_summary','scenario_data','demo','code');
+fprintf('Saved completed results: %s\n',outputDir);
+if summary.FineLo(j)>0.9 && strcmp(run_mode,'full')
+    fprintf('This run supports >90%% under IDEAL known-code timing and stated thresholds only.\n');
 else
-    fprintf('This run does NOT establish a confidence lower bound above 90%%.\n');
+    fprintf('This run does not establish the requested full statistical claim.\n');
 end
 
-%% 6. Intuitive signal-chain figures
-figs=gobjects(7,1);
-figs(1)=figure('Name','1 Random data - spreading - sampling - BPSK','Color','w');
-subplot(3,2,1); stairs(demo.t_us,demo.data_samples,'LineWidth',1.2); ylim([-1.3 1.3]);
-xlabel('Time (us)'); ylabel('Data'); title('Random information bits'); grid on;
-subplot(3,2,2); stairs(0:30,demo.gold,'LineWidth',1.2); ylim([-1.3 1.3]);
-xlabel('Chip index'); title('Known 31-chip Gold sequence'); grid on;
-subplot(3,2,3); stairs((0:numel(demo.spread_chips)-1)/Rc*1e6,demo.spread_chips);
-xlabel('Time (us)'); title('Spread chip sequence: data x PN'); grid on;
-subplot(3,2,4); plot(demo.t_us,demo.spread); ylim([-1.3 1.3]);
-xlabel('Time (us)'); title(sprintf('Chip sampling: %g samples/chip',Ns)); grid on;
-subplot(3,2,5); plot(demo.t_us,demo.tx); xlabel('Time (us)');
-ylabel('Amplitude'); title('Transmitted real BPSK at nominal carrier'); grid on;
-subplot(3,2,6); plot(demo.t_us,demo.rx); xlabel('Time (us)'); ylabel('Amplitude');
-title(sprintf('Received: Eb/N0=%g dB, sample SNR=%.2f dB',plot_EbN0,demo.measured_snr_dB)); grid on;
-
-figs(2)=figure('Name','2 Channel and synchronized despreading','Color','w');
-subplot(3,1,1); plot(demo.t_us,demo.tx); hold on;
-plot(demo.t_us,demo.clean); plot(demo.t_us,demo.rx);
-xlabel('Time (us)'); legend('Transmitted BPSK','Doppler channel (clean)','AWGN received'); grid on;
-title('Real received waveform: sample noise power is much larger than signal');
-subplot(3,1,2); d=demo.est.detail; show=min(numel(d.y),800);
-plot(d.time_s(1:show)*1e3,real(d.y(1:show))); hold on;
-plot(d.time_s(1:show)*1e3,imag(d.y(1:show)));
-xlabel('Time (ms)'); legend('I','Q'); title('After PN wipeoff, downconversion and low-pass filtering'); grid on;
-subplot(3,1,3); plot(d.time_s(1:show)*1e3,real(d.y(1:show).^2)); hold on;
-plot(d.time_s(1:show)*1e3,imag(d.y(1:show).^2));
-xlabel('Time (ms)'); legend('Squared I','Squared Q'); title('Complex squaring removes unknown +/-1 data; noise remains'); grid on;
-
-figs(3)=figure('Name','3 True and estimated linear Doppler','Color','w');
-tl=linspace(0,(N-1)/fs,500);
-ftrue=demo.fd_mid+demo.rate*(tl-record_mid);
-fhat=demo.est.doppler_mid_hz+demo.est.rate_hz_per_s*(tl-demo.est.reference_time_s);
-subplot(2,2,1); plot(tl*1e3,(fc_nominal+ftrue)/1e3,'k','LineWidth',1.5); hold on;
-plot(tl*1e3,(fc_nominal+fhat)/1e3,'r--','LineWidth',1.3);
-xlabel('Time (ms)'); ylabel('Carrier (kHz)'); legend('True','Estimated linear model'); grid on;
-subplot(2,2,2); plot(tl*1e3,ftrue,'k','LineWidth',1.5); hold on;
-plot(tl*1e3,fhat,'r--'); xlabel('Time (ms)'); ylabel('Doppler (Hz)'); grid on;
-legend('True','Estimated linear model');
-subplot(2,2,3); plot(tl*1e3,fhat-ftrue,'LineWidth',1.3);
-xlabel('Time (ms)'); ylabel('Frequency error (Hz)'); grid on;
-subplot(2,2,4); bar([demo.rate,demo.est.rate_hz_per_s]);
-set(gca,'XTickLabel',{'True','Estimated'}); ylabel('Frequency rate (Hz/s)'); grid on;
-title(sprintf('True rate %.2f; estimated %.2f Hz/s',demo.rate,demo.est.rate_hz_per_s));
-
-figs(4)=figure('Name','4 Joint frequency-rate search (not a cyclic spectrum)','Color','w');
-D=demo.est.detail; normalized=D.metric/max(D.metric(:));
-subplot(2,2,[1 2]); surf(D.f_axis/1e3,D.rates,normalized,'EdgeColor','none');
-xlabel('Doppler (kHz)'); ylabel('Rate (Hz/s)'); zlabel('Normalized search score');
-title('Coarse joint search near the selected peak'); view(45,35); colorbar; grid on;
-subplot(2,2,3); plot(D.f_axis,max(normalized,[],1),'LineWidth',1.2); hold on;
-fdref=demo.fd_mid+demo.rate*(demo.est.reference_time_s-record_mid);
-xline(fdref,'k--','True'); xline(demo.est.doppler_mid_hz,'r--','Estimated');
-xlabel('Doppler (Hz)'); ylabel('Max score over rates'); grid on;
-subplot(2,2,4); plot(D.rates,max(normalized,[],2),'o-'); hold on;
-xline(demo.rate,'k--','True'); xline(demo.est.rate_hz_per_s,'r--','Estimated');
-xlabel('Rate (Hz/s)'); ylabel('Max score over frequencies'); grid on;
-
-figs(5)=figure('Name','5 Estimation success and confidence','Color','w');
-subplot(1,2,1); plot(EbN0_dB,100*rate_f,'o-',EbN0_dB,100*rate_r,'s-','LineWidth',1.3);
-hold on; yline(90,'k--'); ylim([0 105]); xlabel('Eb/N0 (dB)'); ylabel('Success (%)');
-legend('Carrier','Rate','90% target','Location','best'); grid on;
-title(sprintf('Thresholds: %g Hz; %g Hz/s',frequency_tolerance_hz,rate_tolerance_hz_per_s));
-subplot(1,2,2); errorbar(EbN0_dB,100*rate_joint,100*(rate_joint-ci_low), ...
-    100*(ci_high-rate_joint),'o-','LineWidth',1.3); hold on; yline(90,'k--');
-ylim([0 105]); xlabel('Eb/N0 (dB)'); ylabel('Joint success (%)'); grid on;
-title(sprintf('%d independent trials; Wilson 95%% intervals',numMonte));
-
-figs(6)=figure('Name','6 RMSE bias and spread','Color','w');
-subplot(2,2,1); semilogy(EbN0_dB,max(rmse_f,eps),'o-');
-xlabel('Eb/N0 (dB)'); ylabel('Carrier RMSE (Hz)'); grid on;
-subplot(2,2,2); semilogy(EbN0_dB,max(rmse_r,eps),'o-');
-xlabel('Eb/N0 (dB)'); ylabel('Rate RMSE (Hz/s)'); grid on;
-subplot(2,2,3); errorbar(EbN0_dB,bias_f,std_f,'o-');
-xlabel('Eb/N0 (dB)'); ylabel('Carrier bias +/- sample std (Hz)'); grid on;
-subplot(2,2,4); errorbar(EbN0_dB,bias_r,std_r,'o-');
-xlabel('Eb/N0 (dB)'); ylabel('Rate bias +/- sample std (Hz/s)'); grid on;
-
-figs(7)=figure('Name','7 Independent trials at -7 dB Eb/N0','Color','w');
-subplot(2,2,1); histogram(error_frequency(j,:),20); hold on;
-xline(-frequency_tolerance_hz,'r--'); xline(frequency_tolerance_hz,'r--');
-xlabel('Carrier error (Hz)'); ylabel('Count'); grid on;
-subplot(2,2,2); histogram(error_rate(j,:),20); hold on;
-xline(-rate_tolerance_hz_per_s,'r--'); xline(rate_tolerance_hz_per_s,'r--');
-xlabel('Rate error (Hz/s)'); ylabel('Count'); grid on;
-subplot(2,2,3); scatter(true_frequency(j,:)/1e3,hat_frequency(j,:)/1e3,24,'filled'); hold on;
-limits=[min(true_frequency(j,:)),max(true_frequency(j,:))]/1e3;
-plot(limits,limits,'k--'); xlabel('True carrier (kHz)'); ylabel('Estimated (kHz)'); grid on;
-subplot(2,2,4); scatter(true_rate(j,:),hat_rate(j,:),24,'filled'); hold on;
-plot([-rate_test_max rate_test_max],[-rate_test_max rate_test_max],'k--');
-xlabel('True rate (Hz/s)'); ylabel('Estimated rate (Hz/s)'); grid on;
-
-%% 7. Save the current run; do not substitute previous Python outcomes
-if saveResults
-    outputDir=fullfile(pwd,['FSM_BPSK_results_' datestr(now,'yyyymmdd_HHMMSS')]);
-    if ~exist(outputDir,'dir'); mkdir(outputDir); end
-    writetable(summary_table,fullfile(outputDir,'summary.csv'));
-    parameters=struct('Rb',Rb,'Rc',Rc,'fs',fs,'Tobs',Tobs,'fc_nominal',fc_nominal, ...
-        'EbN0_dB',EbN0_dB,'numMonte',numMonte,'frequency_tolerance_hz', ...
-        frequency_tolerance_hz,'rate_tolerance_hz_per_s',rate_tolerance_hz_per_s,'cfg',cfg);
-    save(fullfile(outputDir,'results.mat'),'parameters','summary_table', ...
-        'error_frequency','error_rate','true_frequency','true_rate', ...
-        'hat_frequency','hat_rate','solver_ok','demo','gold','e0');
-    for i=1:numel(figs)
-        savefig(figs(i),fullfile(outputDir,sprintf('figure_%02d.fig',i)));
-        print(figs(i),fullfile(outputDir,sprintf('figure_%02d.png',i)),'-dpng','-r150');
-    end
-    fprintf('Saved this MATLAB run to:\n%s\n',outputDir);
-end
-
-%% Local functions
-function bits=local_mseq(taps)
-    % s[n+5]=XOR of s[n+tap]; degree-five recurrence, all-one seed.
-    s=ones(1,36);
-    for n=1:31; s(n+5)=mod(sum(s(n+taps)),2); end
-    assert(isequal(s(32:36),s(1:5)),'LFSR period check failed.');
-    bits=s(1:31);
-    assert(sum(bits)==16,'Expected maximal-length sequence balance.');
-end
-
-function [bits,chips,samples,clean]=transmit_record(nb,gold,Ns,t,fc,fd,rate,phase)
+%% Independent transmitter, channel and receiver; truth never enters estimator
+function [row,demo]=one_trial(c,code,eb,fd,a,keep)
+    nb=round(c.Rb*c.T); Ns=c.fs/c.Rc; N=nb*31*Ns;
+    assert(Ns==round(Ns) && nb>0);
+    rawTime=(0:N-1)/c.fs; reference=(N-1)/(2*c.fs); t=rawTime-reference;
     bits=2*randi([0 1],1,nb)-1;
-    chips=repelem(bits,numel(gold)).*repmat(gold,1,nb);
-    samples=repelem(chips,Ns);
-    % Transmitter: samples .* cos(carrier_phase). The propagation channel
-    % adds Doppler phase to the underlying carrier, not cos*cos mixing.
-    carrier_phase=2*pi*fc*t;
-    channel_phase=2*pi*fd*t+pi*rate*t.^2+phase;
-    clean=samples.*cos(carrier_phase+channel_phase);
+    data=repelem(bits,31*Ns); pn=repelem(repmat(code,1,nb),Ns);
+    spread=data.*pn;
+    channelPhase=2*pi*fd*t+pi*a*t.^2+pi/3*c.jerk*t.^3+2*pi*rand;
+    clean=spread.*cos(2*pi*c.fc*t+channelPhase);
+    if isinf(eb); rx=clean;
+    else
+        variance=mean(clean.^2)*c.fs/(2*c.Rb*10^(eb/10));
+        rx=clean+sqrt(variance)*randn(1,N);
+    end
+    if c.useKnownPN
+        ci=floor((0:N-1)*(1+c.rxRatePPM*1e-6)/Ns+c.rxPhaseChip);
+        receiverPN=code(mod(ci,31)+1);
+        processed=rx.*receiverPN;
+    else; processed=rx; end
+    % REAL resampling, no downconversion, no extra 90 kHz cutoff.
+    y=resample(processed(:),1,round(c.fs/c.scfFs));
+    est=fsm_estimate(y,c,keep);
+    delta=est.reference-reference;
+    trueF=c.fc+fd+a*delta+.5*c.jerk*delta^2;
+    trueA=a+c.jerk*delta;
+    row=[trueF,trueA,est.fCoarse,est.aCoarse,est.fFine,est.aFine, ...
+        est.fCoarse-trueF,est.aCoarse-trueA,est.fFine-trueF,est.aFine-trueA, ...
+        est.converged,est.atBoundary,est.frameCount];
+    demo=struct();
+    if keep
+        ns=min(N,round(c.rawDisplaySeconds*c.fs));
+        demo=struct('t_us',rawTime(1:ns)*1e6,'data',data(1:ns),'spread',spread(1:ns), ...
+            'tx',spread(1:ns).*cos(2*pi*c.fc*t(1:ns)),'clean',clean(1:ns),'rx',rx(1:ns), ...
+            'fd',fd,'rate',a,'rawReference',reference,'truthF',trueF,'est',est);
+    end
 end
 
-function est=receiver_estimate(x,pn,fs,fc,cfg,keep_detail)
-    x=x(:); pn=pn(:); n=numel(x); tr=(0:n-1)'/fs;
-    dec=round(fs/cfg.outFs); assert(abs(fs/dec-cfg.outFs)<1e-6);
-    % Known PN only: data bits are never supplied to the receiver.
-    base=resample(2*x.*pn.*exp(-1j*2*pi*fc*tr),1,dec);
-    h=fir1(128,cfg.bandwidthHz/(cfg.outFs/2)); base=conv(base,h,'same');
-    valid=65:numel(base)-64; y=base(valid); tm=(valid(:)-1)/cfg.outFs;
-    reference=(tm(1)+tm(end))/2; t=tm-reference; T=numel(y)/cfg.outFs;
-    assert(2*max(abs(cfg.fRange))+max(abs(cfg.rateRange))*T<cfg.outFs/2, ...
-        'Squared chirp aliasing: increase baseband sample rate.');
-    assert(cfg.rateStep<=1/T^2*1.01,'Rate grid too coarse for observation time.');
-    window=0.5-0.5*cos(2*pi*(0:numel(y)-1)'/(numel(y)-1));
-    q=y.^2.*window; nfft=2^nextpow2(2*numel(q));
-    faxis=(-nfft/2:nfft/2-1)'*cfg.outFs/nfft/2;
-    select=find(faxis>=cfg.fRange(1)&faxis<=cfg.fRange(2));
-    rates=unique([cfg.rateRange(1):cfg.rateStep:cfg.rateRange(2),cfg.rateRange(2)]);
+%% Actual FSM in the frequency domain
+function est=fsm_estimate(y,c,keep)
+    n=numel(y); starts=0:c.hop:n-c.L; assert(numel(starts)>=3);
+    indices=bsxfun(@plus,(0:c.L-1)',starts)+1;
+    w=0.5-0.5*cos(2*pi*(0:c.L-1)'/(c.L-1));
+    frames=bsxfun(@times,y(indices),w);
+    ref=(n-1)/(2*c.scfFs);
+    tc=(indices-1)/c.scfFs-ref;
+    ts=starts/c.scfFs-ref;
+    band=-(c.smoothingBins-1)/2:(c.smoothingBins-1)/2;
+    rates=unique([c.rateRange(1):c.rateStep:c.rateRange(2),c.rateRange(2)]);
+    df=c.scfFs/c.L; X=fft(frames,[],1);
+    M=numel(starts); nt=2^nextpow2(2*M);
+    deltaAlpha=(-nt/2:nt/2-1)*(c.scfFs/c.hop)/nt;
     best=-Inf; f0=NaN; a0=NaN;
-    if keep_detail; scores=zeros(numel(rates),numel(select)); end
-    for r=1:numel(rates)
-        p=abs(fftshift(fft(q.*exp(-1j*2*pi*rates(r)*t.^2),nfft))).^2;
-        if keep_detail; scores(r,:)=p(select).'; end
-        [v,k]=max(p(select));
-        if v>best; best=v; f0=faxis(select(k)); a0=rates(r); end
+    coarseF=[]; coarseScore=[]; shortlist=[];
+    % Bank of S^{alpha_b}(f) spectral cross-products. A temporal FFT fills
+    % the cyclic-frequency interval around each alpha_b=2*k*df.
+    for k=floor(c.fRange(1)/df):ceil(c.fRange(2)/df)
+        fb=k*df;
+        p=mean(X(mod(band+k,c.L)+1,:).*conj(X(mod(band-k,c.L)+1,:)),1);
+        p=p.*exp(-1j*4*pi*fb*ts);
+        bank=bsxfun(@times,p,exp(-1j*2*pi*rates(:)*ts.^2));
+        power=abs(fftshift(fft(bank,nt,2),2)).^2;
+        candidates=fb+deltaAlpha/2;
+        valid=deltaAlpha>=-df & deltaAlpha<df & candidates>=c.fRange(1) & candidates<=c.fRange(2);
+        ids=find(valid); if isempty(ids); continue; end
+        P=power(:,valid); [value,linear]=max(P(:)); [ir,jf]=ind2sub(size(P),linear);
+        shortlist=[shortlist;value,candidates(ids(jf)),rates(ir)]; %#ok<AGROW>
+        if value>best; best=value; f0=candidates(ids(jf)); a0=rates(ir); end
+        if keep
+            coarseF=[coarseF,candidates(valid)]; coarseScore=[coarseScore,P]; %#ok<AGROW>
+        end
     end
-    fun=@(p) receiver_score(p,q,t,f0,a0,T,cfg);
-    [p,~,flag]=fminsearch(fun,[0 0],optimset('Display','off', ...
-        'TolX',1e-6,'TolFun',1e-7,'MaxIter',300));
-    est.doppler_mid_hz=f0+p(1)/T; est.rate_hz_per_s=a0+p(2)/T^2;
-    est.carrier_mid_hz=fc+est.doppler_mid_hz; est.reference_time_s=reference;
-    est.optimizer_converged=flag>0; est.coarse_doppler_hz=f0; est.coarse_rate=a0;
-    if keep_detail
-        % Display only a local slice; full fixed-prior search was performed.
-        zoom=abs(faxis(select)-f0)<=100;
-        est.detail=struct('y',y,'time_s',tm,'f_axis',faxis(select(zoom)).', ...
-            'rates',rates,'metric',scores(:,zoom));
+    % Short-time cyclic sampling can produce adjacent FFT-branch aliases.
+    % Rescore multiple candidates using exact FSM; never use ground truth.
+    [~,ranking]=sort(shortlist(:,1),'descend');
+    ranking=ranking(1:min(c.confirmCandidates,numel(ranking)));
+    verified=-Inf;
+    for j=ranking(:).'
+        value=fsm_score(frames,tc,shortlist(j,2),shortlist(j,3),c,w,band);
+        if value>verified
+            verified=value; f0=shortlist(j,2); a0=shortlist(j,3);
+        end
+    end
+    T=n/c.scfFs;
+    initial=max(fsm_score(frames,tc,f0,a0,c,w,band),realmin);
+    fun=@(p) exact_objective(p,frames,tc,f0,a0,T,c,w,band,initial);
+    [p,~,flag]=fminsearch(fun,[0 0],optimset('Display','off','TolX',1e-5, ...
+        'TolFun',1e-8,'MaxIter',200));
+    est.fCoarse=f0; est.aCoarse=a0; est.fFine=f0+p(1)/T; est.aFine=a0+p(2)/T^2;
+    est.reference=ref; est.converged=flag>0; est.frameCount=M;
+    est.atBoundary=min(abs(est.fFine-c.fRange))<1/T || ...
+        min(abs(est.aFine-c.rateRange))<1/T^2;
+    if keep
+        faxis=(-c.L/2:c.L/2-1)'*df;
+        S=fsm_spectrum(frames,tc,est.fFine,est.aFine,c,w);
+        kernel=ones(c.smoothingBins,1)/c.smoothingBins;
+        fineF=linspace(max(c.fRange(1),est.fFine-50),min(c.fRange(2),est.fFine+50),41);
+        Smap=zeros(numel(fineF),c.L);
+        for j=1:numel(fineF)
+            spec=fsm_spectrum(frames,tc,fineF(j),est.aFine,c,w);
+            Smap(j,:)=conv(spec,kernel,'same').';
+        end
+        [coarseF,order]=sort(coarseF); coarseScore=coarseScore(:,order);
+        zoom=abs(coarseF-f0)<100;
+        est.detail=struct('f_axis',faxis,'alpha_axis',2*fineF,'Smap',Smap, ...
+            'Sfine',S,'SfineSmoothed',conv(S,kernel,'same'), ...
+            'coarseF',coarseF(zoom),'coarseRates',rates, ...
+            'coarseMetric',coarseScore(:,zoom)/max(coarseScore(:)));
     end
 end
 
-function v=receiver_score(p,q,t,f0,a0,T,cfg)
+function spec=fsm_spectrum(frames,tc,f,a,c,w)
+    % alpha=2*f; polynomial phase accounts for cyclic-frequency drift 2*a.
+    % At a=0, exactly the ordinary shifted-FFT FSM cyclic spectrum.
+    phase=2*pi*f*tc+pi*a*tc.^2;
+    Xp=fft(frames.*exp(-1j*phase),[],1);
+    Xm=fft(frames.*exp( 1j*phase),[],1);
+    spec=fftshift(mean(Xp.*conj(Xm),2))/(c.scfFs*sum(w.^2));
+end
+
+function J=fsm_score(frames,tc,f,a,c,w,band)
+    spec=fsm_spectrum(frames,tc,f,a,c,w);
+    % Frequency-smoothed complex SCF at spectral f=0; absolute value last.
+    J=abs(mean(spec(c.L/2+1+band)))^2;
+end
+
+function value=exact_objective(p,frames,tc,f0,a0,T,c,w,band,normalizer)
     f=f0+p(1)/T; a=a0+p(2)/T^2;
-    if f<cfg.fRange(1)||f>cfg.fRange(2)||a<cfg.rateRange(1)||a>cfg.rateRange(2)
-        v=Inf; return;
+    if f<c.fRange(1)||f>c.fRange(2)||a<c.rateRange(1)||a>c.rateRange(2)
+        value=1e6; return;
     end
-    v=-abs(sum(q.*exp(-1j*(4*pi*f*t+2*pi*a*t.^2))))^2 / max(sum(abs(q))^2,eps);
+    value=-fsm_score(frames,tc,f,a,c,w,band)/normalizer;
 end
 
-function [lo,hi]=wilson_interval(success,n)
+function code=make_gold()
+    a=mseq([0 2]); b=mseq([0 2 3 4]);
+    code=2*double(xor(logical(a),circshift(logical(b),[0 1])))-1;
+end
+function bits=mseq(taps)
+    s=ones(1,36); for j=1:31; s(j+5)=mod(sum(s(j+taps)),2); end
+    assert(isequal(s(32:36),s(1:5)) && sum(s(1:31))==16); bits=s(1:31);
+end
+function t=rows_table(r)
+    t=array2table(r,'VariableNames',{'TrueF_Hz','TrueRate_HzPerS','CoarseF_Hz', ...
+        'CoarseRate_HzPerS','FineF_Hz','FineRate_HzPerS','CoarseF_Error', ...
+        'CoarseRate_Error','FineF_Error','FineRate_Error','Converged','AtBoundary','FrameCount'});
+end
+function s=summarize(r,c)
+    cf=abs(r(:,7))<=c.fTolerance; ca=abs(r(:,8))<=c.rateTolerance;
+    ff=abs(r(:,9))<=c.fTolerance; fa=abs(r(:,10))<=c.rateTolerance;
+    cj=cf&ca; fj=ff&fa&r(:,11)>0;
+    [cl,ch]=wilson(sum(cj),size(r,1)); [fl,fh]=wilson(sum(fj),size(r,1));
+    s=[size(r,1),mean(cj),cl,ch,mean(fj),fl,fh,mean(cf),mean(ca),mean(ff),mean(fa), ...
+        sqrt(mean(r(:,7).^2)),sqrt(mean(r(:,8).^2)),sqrt(mean(r(:,9).^2)),sqrt(mean(r(:,10).^2)), ...
+        mean(r(:,9)),mean(r(:,10)),std(r(:,9)),std(r(:,10)), ...
+        mean(abs(r(:,9))<abs(r(:,7))),mean(abs(r(:,10))<abs(r(:,8))),mean(r(:,11)>0),mean(r(:,12)>0), ...
+        mean(r(:,7)),mean(r(:,8)),std(r(:,7)),std(r(:,8))];
+end
+function t=summary_table(r,firstName)
+    names={firstName,'Count','CoarseJoint','CoarseLo','CoarseHi','FineJoint','FineLo','FineHi', ...
+        'CoarseF_Success','CoarseRate_Success','FineF_Success','FineRate_Success', ...
+        'CoarseF_RMSE','CoarseRate_RMSE','FineF_RMSE','FineRate_RMSE', ...
+        'FineF_Bias','FineRate_Bias','FineF_Std','FineRate_Std','StrictFrequencyWin', ...
+        'StrictRateWin','ConvergenceFraction','BoundaryFraction','CoarseF_Bias','CoarseRate_Bias', ...
+        'CoarseF_Std','CoarseRate_Std'};
+    t=array2table(r,'VariableNames',names);
+end
+function t=group_stats(r,x,edges,c)
+    values=nan(numel(edges)-1,12);
+    for j=1:numel(edges)-1
+        use=x>=edges(j)&x<edges(j+1);
+        if j==numel(edges)-1; use=x>=edges(j)&x<=edges(j+1); end
+        n=sum(use); center=(edges(j)+edges(j+1))/2;
+        if n==0; values(j,:)=[edges(j),edges(j+1),center,0,NaN,NaN,NaN,NaN,NaN,NaN,NaN,NaN]; continue; end
+        rr=r(use,:); ok=abs(rr(:,9))<=c.fTolerance & abs(rr(:,10))<=c.rateTolerance & rr(:,11)>0;
+        [lo,hi]=wilson(sum(ok),n);
+        coarse_ok=abs(rr(:,7))<=c.fTolerance & abs(rr(:,8))<=c.rateTolerance;
+        values(j,:)=[edges(j),edges(j+1),center,n,mean(ok),lo,hi,sqrt(mean(rr(:,9).^2)), ...
+            sqrt(mean(rr(:,10).^2)),mean(rr(:,9)),mean(rr(:,10)),mean(coarse_ok)];
+    end
+    t=array2table(values,'VariableNames',{'Lower','Upper','Center','Count','FineJoint','Lo','Hi','FrequencyRMSE','RateRMSE','FrequencyBias','RateBias','CoarseJoint'});
+end
+function plot_groups(t)
+    errorbar(t.Center,100*t.FineJoint,100*(t.FineJoint-t.Lo),100*(t.Hi-t.FineJoint),'o-');
+    hold on; yline(90,'k--'); ylim([0 105]); grid on;
+end
+function [lo,hi]=wilson(success,n)
     z=1.96; p=success/n; den=1+z^2/n;
-    c=(p+z^2/(2*n))/den;
-    half=z*sqrt(p.*(1-p)/n+z^2/(4*n^2))/den;
-    lo=max(0,c-half); hi=min(1,c+half);
+    center=(p+z^2/(2*n))/den; half=z*sqrt(p*(1-p)/n+z^2/(4*n^2))/den;
+    lo=max(0,center-half); hi=min(1,center+half);
 end
