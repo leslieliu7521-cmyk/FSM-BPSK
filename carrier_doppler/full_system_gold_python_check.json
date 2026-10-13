@@ -1,0 +1,34 @@
+{
+  "trials": 5,
+  "duration_s": 0.1,
+  "eb_n0_db": -7,
+  "carrier_success": 1.0,
+  "rate_success": 1.0,
+  "joint_success": 1.0,
+  "frequency_rmse_hz": 0.21804497985025623,
+  "rate_rmse_hz_per_s": 29.829505352477728,
+  "errors": [
+    [
+      0.22227086404745933,
+      -5.854208570178194
+    ],
+    [
+      0.3328696133576159,
+      14.924529053682363
+    ],
+    [
+      0.13775236727997253,
+      2.172005328696514
+    ],
+    [
+      -0.22780585701548262,
+      -15.836129072015638
+    ],
+    [
+      -0.08148819857160561,
+      62.741398066003484
+    ]
+  ],
+  "pipeline": "real passband, sampled known PN wipeoff, downconversion, 62x resampling, lowpass, square chirp estimator",
+  "limitations": "exact code timing, explicit degree-5 Gold pair, not original mseq convention; unknown data; linear Doppler only"
+}
