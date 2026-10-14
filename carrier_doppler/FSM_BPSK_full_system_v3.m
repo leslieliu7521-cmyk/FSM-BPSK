@@ -99,27 +99,27 @@ code=make_gold(); newConditions=0;
 for k=1:numel(state.conditions)
     if state.completed(k); continue; end
     if newConditions>=opts.maxNewConditions; break; end
-    condition=state.conditions(k);
-    fprintf('\n[%d/%d] %s (%d次)\n',k,numel(state.conditions),condition.name,condition.nTrials);
-    if condition.reuse>0
-        assert(state.completed(condition.reuse),'复用条件尚未完成。');
-        state.records{k}=state.records{condition.reuse};
-        state.done{k}=state.done{condition.reuse};
+    currentCondition=state.conditions(k);
+    fprintf('\n[%d/%d] %s (%d次)\n',k,numel(state.conditions),currentCondition.name,currentCondition.nTrials);
+    if currentCondition.reuse>0
+        assert(state.completed(currentCondition.reuse),'复用条件尚未完成。');
+        state.records{k}=state.records{currentCondition.reuse};
+        state.done{k}=state.done{currentCondition.reuse};
     else
-        for trial=1:condition.nTrials
+        for trial=1:currentCondition.nTrials
             if state.done{k}(trial); continue; end
             seed=state.baseSeeds(trial);
             try
                 base=make_base(cfg,code,seed);
-                [record,demo]=run_trial(base,condition,code,trial);
+                [record,demo]=run_trial(base,currentCondition,code,trial);
                 state.records{k}{trial}=record;
                 state.done{k}(trial)=true; % 仅在整条记录完整后提交这一试验编号
                 state.lastBaseRngState=base.rngState;
-                if strcmp(condition.name,'EbN0_minus7') && trial==1; state.demo=demo; end
+                if strcmp(currentCondition.name,'EbN0_minus7') && trial==1; state.demo=demo; end
             catch ME
                 % 编程/资源异常不是科学失效样本：不计为完成，下次重试同seed、同编号。
                 % 数值无效估计则由run_trial正常返回并计为失败，不进入这里。
-                state.lastException=sprintf('%s / trial %d: %s',condition.name,trial,getReport(ME));
+                state.lastException=sprintf('%s / trial %d: %s',currentCondition.name,trial,getReport(ME));
                 state.rngState=rng;
                 atomic_state_save(state,fullfile(outputDir,'checkpoint.mat'));
                 rethrow(ME);
@@ -128,8 +128,8 @@ for k=1:numel(state.conditions)
                 state.rngState=rng;
                 atomic_state_save(state,fullfile(outputDir,'checkpoint.mat'));
             end
-            if mod(trial,25)==0 || trial==condition.nTrials
-                fprintf('  完成%d/%d\n',sum(state.done{k}),condition.nTrials);
+            if mod(trial,25)==0 || trial==currentCondition.nTrials
+                fprintf('  完成%d/%d\n',sum(state.done{k}),currentCondition.nTrials);
             end
         end
     end
@@ -137,9 +137,9 @@ for k=1:numel(state.conditions)
     state.rngState=rng; state.phase='condition_trials_done';
     % 先提交逐次完成标记；若条件MAT导出失败，恢复时不重算试验，只重试保存。
     atomic_state_save(state,fullfile(outputDir,'checkpoint.mat'));
-    bundle=struct('condition',condition,'records',{state.records{k}}, ...
+    bundle=struct('condition',currentCondition,'records',{state.records{k}}, ...
         'baseSeeds',state.baseSeeds,'rngState',state.rngState);
-    atomic_bundle_save(bundle,fullfile(outputDir,[condition.name '_numeric.mat']));
+    atomic_bundle_save(bundle,fullfile(outputDir,[currentCondition.name '_numeric.mat']));
     state.completed(k)=true; state.phase='conditions_running';
     atomic_state_save(state,fullfile(outputDir,'checkpoint.mat'));
     newConditions=newConditions+1;
@@ -199,24 +199,24 @@ function plan=make_conditions(c,n,mode)
     end
     for i=1:numel(f)
         for j=1:numel(a)
-            plan(end+1)=condition(sprintf('Scan_%03d_%02d',i,j),'scan',c,Inf,1,0,f(i),a(j)); %#ok<AGROW>
+            plan(end+1)=make_condition_entry(sprintf('Scan_%03d_%02d',i,j),'scan',c,Inf,1,0,f(i),a(j)); %#ok<AGROW>
         end
     end
     eb=[-10 -8 -7 -6 -4]; baseline=0;
     for x=eb
         name=sprintf('EbN0_minus%d',abs(x));
-        plan(end+1)=condition(name,'snr',c,x,n,0,NaN,NaN); %#ok<AGROW>
+        plan(end+1)=make_condition_entry(name,'snr',c,x,n,0,NaN,NaN); %#ok<AGROW>
         if x==-7; baseline=numel(plan); end
     end
     for count=[5 10 Inf]
         d=c; d.confirmCandidates=count;
         reuse=0; if count==c.confirmCandidates; reuse=baseline; end
         if isinf(count); name='Candidates_all_distinct'; else; name=sprintf('Candidates_%d',count); end
-        plan(end+1)=condition(name,'candidates',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
+        plan(end+1)=make_condition_entry(name,'candidates',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
     end
     for duration=[.001 .01 .05 .1]
         d=c; d.T=duration; reuse=0; if duration==c.T; reuse=baseline; end
-        plan(end+1)=condition(sprintf('Duration_%g_ms',duration*1000),'duration',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
+        plan(end+1)=make_condition_entry(sprintf('Duration_%g_ms',duration*1000),'duration',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
     end
     names={'IdealSync','Phase_0p125_chip','Phase_0p5_chip','Phase_1_chip', ...
         'Rate_1_ppm','Rate_5_ppm','Rate_25_ppm','Jerk_1000','Jerk_5000','RawFSM_800k_BandlimitedNoPN'};
@@ -226,15 +226,15 @@ function plan=make_conditions(c,n,mode)
         d=c; d.rxPhaseChip=phases(i); d.rxRatePPM=ppms(i); d.jerk=jerks(i);
         if i==numel(names); d.useKnownPN=false; end
         reuse=0; if i==1; reuse=baseline; end
-        plan(end+1)=condition(names{i},'sensitivity',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
+        plan(end+1)=make_condition_entry(names{i},'sensitivity',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
     end
     for fsout=[8e5 16e5]
         d=c; d.scfFs=fsout; d.L=round(c.L*fsout/c.scfFs); d.hop=d.L/2;
         reuse=0; if fsout==c.scfFs; reuse=baseline; end
-        plan(end+1)=condition(sprintf('Bandwidth_%g_kSps',fsout/1000),'bandwidth',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
+        plan(end+1)=make_condition_entry(sprintf('Bandwidth_%g_kSps',fsout/1000),'bandwidth',d,-7,n,reuse,NaN,NaN); %#ok<AGROW>
     end
 end
-function d=condition(name,stage,c,eb,n,reuse,f,a)
+function d=make_condition_entry(name,stage,c,eb,n,reuse,f,a)
     d=struct('name',name,'stage',stage,'cfg',c,'eb',eb,'nTrials',n,'reuse',reuse,'scanF',f,'scanA',a);
 end
 

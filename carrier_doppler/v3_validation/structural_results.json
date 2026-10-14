@@ -12,6 +12,8 @@
     "parameter_cfg.multiStarts=3": "PASS (Python cross-check)",
     "parameter_cfg.fTolerance=20": "PASS (Python cross-check)",
     "parameter_cfg.rateTolerance=200": "PASS (Python cross-check)",
+    "no_script_variable_local_function_collision": "PASS (Python cross-check)",
+    "condition_helper_renamed": "PASS (Python cross-check)",
     "quick_default": "PASS (Python cross-check)",
     "numeric_save_before_plot": "PASS (Python cross-check)",
     "closed_handle_and_numbered_print": "PASS (Python cross-check)",
@@ -33,6 +35,6 @@
     "numeric_survives_print_failure": "PASS (Python cross-check)"
   },
   "paired_smoke": [],
-  "source_sha256": "75ae2b6908c5ae542abfa793af293bbb7e9d0da0778bb63222180fedd9d0573e",
-  "elapsed_s": 0.00753218700265279
+  "source_sha256": "dfbfb1e4fa03a0a77c56418e53a014a80872eeba79deb6bd6a81d3e3ec676114",
+  "elapsed_s": 0.005341442000826646
 }

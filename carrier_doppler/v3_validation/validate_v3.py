@@ -101,6 +101,18 @@ def run(structural_only=False):
  check('original_file_preserved',hashlib.sha256(original.read_bytes()).hexdigest()=='ffac50f39cd0d334a070bcb403fc1cdbe72e5379e0eded7713341dda213c21d4')
  for term in ['cfg.Rb=1e5','cfg.Rc=31e5','cfg.fs=24.8e6','cfg.T=.1','nTrials=1000','cfg.multiStarts=3','cfg.fTolerance=20','cfg.rateTolerance=200']:
   check('parameter_'+term,term in source)
+ # MATLAB scripts prohibit a script variable sharing a local function name.
+ # Strip strings/comments first: saved struct field names are not variables.
+ script=source.split('\nfunction ',1)[0]
+ script=re.sub(r"'(?:''|[^'\n])*'", "''", script)
+ script=re.sub(r'%[^\n]*', '', script)
+ variables=set(re.findall(r'\b([A-Za-z]\w*)\s*=(?!=)',script))
+ variables.update(re.findall(r'\bfor\s+([A-Za-z]\w*)\s*=',script))
+ for outputs in re.findall(r'\[([^]\n]+)\]\s*=(?!=)',script):
+  variables.update(re.findall(r'\b[A-Za-z]\w*\b',outputs))
+ functions=set(re.findall(r'^function\s+(?:(?:\[[^]\n]*\]|\w+)\s*=\s*)?(\w+)\s*\(',source,re.M))
+ check('no_script_variable_local_function_collision',not variables.intersection(functions))
+ check('condition_helper_renamed', 'function d=make_condition_entry(' in source and 'function d=condition(' not in source)
  check('quick_default',"'mode','quick'" in source)
  check('numeric_save_before_plot',source.index("state.phase='numerics_saved_before_plot'")<source.index('[figures,creationErrors]=create_figures'))
  check('closed_handle_and_numbered_print',"~isgraphics(h,'figure')" in source and "print(number,png,'-dpng','-r150')" in source)

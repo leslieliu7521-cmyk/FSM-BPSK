@@ -1,14 +1,15 @@
 {
-  "matlab_parse_has_error": false,
+  "matlab_parse_has_error": null,
+  "parser_executed_this_patch": false,
   "matlab_executable": null,
   "octave_executable": null,
   "matlab_native_executed": false,
-  "source_sha256": "75ae2b6908c5ae542abfa793af293bbb7e9d0da0778bb63222180fedd9d0573e",
+  "source_sha256": "dfbfb1e4fa03a0a77c56418e53a014a80872eeba79deb6bd6a81d3e3ec676114",
   "original_unchanged_sha256": "ffac50f39cd0d334a070bcb403fc1cdbe72e5379e0eded7713341dda213c21d4",
   "source_lines": 909,
   "functions": {
     "function plan=make_conditions": 187,
-    "function d=condition": 237,
+    "function d=make_condition_entry": 237,
     "function b=make_base": 242,
     "function [record,demo]=run_trial": 254,
     "function r=receiver_config": 316,
@@ -48,5 +49,6 @@
     "function folder=unique_directory": 895,
     "function code=make_gold": 901,
     "function bits=mseq": 905
-  }
+  },
+  "patch_checks": "30 structural/control/formula checks passed, including script/local-function name collision checks; no native MATLAB execution"
 }
