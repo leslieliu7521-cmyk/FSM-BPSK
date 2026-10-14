@@ -1,6 +1,19 @@
 # FSM-BPSK
 
-最新完整程序：[FSM_BPSK_full_system_v3.m](carrier_doppler/FSM_BPSK_full_system_v3.m)。原`FSM_BPSK_full_system.m`保持不变，请运行新文件。
+新增完整诊断版：[FSM_BPSK_full_system_v4.m](carrier_doppler/FSM_BPSK_full_system_v4.m)，保留v3与原文件。
+
+- [下载v4完整交付包](FSM_BPSK_full_system_v4_delivery.zip)
+- [v4运行、30/100次诊断、full与恢复](carrier_doppler/FSM_v4_运行说明.md)
+- [v4修改与诊断尺度](carrier_doppler/FSM_v4_修改说明.md)
+- [v4实际验证报告及未完成项目](carrier_doppler/FSM_v4_验证报告.md)
+
+v4默认短记录/本地PN失配诊断：保存分支候选、去重映射、精确排名、多起点和独立真值评价，并对照原V3/全部确认/每分支9峰/半尺度去重/固定小范围直接FSM。尚未证明完整先验误锁已经修复；指标高不等于误差小。成功率图均带Count/Wilson；数值先保存，再逐图导出。
+
+当前环境没有MATLAB/Octave，未原生运行；Python配对诊断不能代替MATLAB验证。先selftest与少量诊断，再决定是否扩大，不默认运行full。PN失配仅改变本地PN索引，非ADC时钟；相移分辨率0.125码片。
+
+以下保留v3说明与下载：
+
+v3完整程序：[FSM_BPSK_full_system_v3.m](carrier_doppler/FSM_BPSK_full_system_v3.m)。原`FSM_BPSK_full_system.m`保持不变，请运行新文件。
 
 - [下载完整v3交付包](FSM_BPSK_full_system_v3_delivery.zip)
 - [运行、恢复与读取结果](carrier_doppler/FSM_v3_运行说明.md)
