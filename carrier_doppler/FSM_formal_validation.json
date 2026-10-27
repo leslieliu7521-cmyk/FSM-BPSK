@@ -1,0 +1,29 @@
+{
+  "checks": {
+    "FSM_BPSK_full_system_v3.m_unchanged": "PASS",
+    "FSM_BPSK_full_system_v4.m_unchanged": "PASS",
+    "FSM_BPSK_formal_experiment.m_syntax_only": "PASS",
+    "FSM_BPSK_formal_report.m_syntax_only": "PASS",
+    "entry_full_explicit": "PASS",
+    "resume_full_only": "PASS",
+    "resume_counts_1000": "PASS",
+    "resume_absolute_path": "PASS",
+    "run_is_last_action": "PASS",
+    "report_requires_full": "PASS",
+    "report_requires_completed_thousand": "PASS",
+    "report_wilson_lower": "PASS",
+    "report_preserves_failures": "PASS",
+    "noiseless_scan_265": "PASS",
+    "noisy_conditions_24": "PASS"
+  },
+  "matlab_executable": null,
+  "octave_executable": null,
+  "native_executed": false,
+  "full_experiment_executed": false,
+  "parser_limit": "Syntax parser only, not MATLAB semantics or runtime",
+  "scan_conditions": 265,
+  "noisy_conditions": 24,
+  "trials_per_noisy_condition": 1000,
+  "reused_conditions": 4,
+  "new_noisy_searches": 20000
+}

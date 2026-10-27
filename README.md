@@ -1,5 +1,7 @@
 # FSM-BPSK
 
+正式实验：[下载正式实验包](FSM_BPSK_formal_experiment_delivery.zip)。解压后执行`FSM_BPSK_formal_experiment`，固定full、每个含噪条件1000次；读取/恢复见[FSM正式实验说明](carrier_doppler/FSM_正式实验说明.md)。当前没有MATLAB原生正式结果，不保证达到90%；v3/v4保持不变。
+
 新增完整诊断版：[FSM_BPSK_full_system_v4.m](carrier_doppler/FSM_BPSK_full_system_v4.m)，保留v3与原文件。
 
 - [下载v4完整交付包](FSM_BPSK_full_system_v4_delivery.zip)
