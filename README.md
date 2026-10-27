@@ -1,5 +1,7 @@
 # FSM-BPSK
 
+固定变化率+700Hz/s：[下载完整实验包](FSM_BPSK_rate700_delivery.zip)，[完整MATLAB脚本](carrier_doppler/FSM_BPSK_rate700.m)，[运行说明](carrier_doppler/FSM_700Hz每秒实验说明.md)。接收先验仍为±1000Hz/s，主观测100ms，正式每个含噪条件1000次；当前无MATLAB原生统计结果。
+
 正式实验：[下载正式实验包](FSM_BPSK_formal_experiment_delivery.zip)。解压后执行`FSM_BPSK_formal_experiment`，固定full、每个含噪条件1000次；读取/恢复见[FSM正式实验说明](carrier_doppler/FSM_正式实验说明.md)。当前没有MATLAB原生正式结果，不保证达到90%；v3/v4保持不变。
 
 新增完整诊断版：[FSM_BPSK_full_system_v4.m](carrier_doppler/FSM_BPSK_full_system_v4.m)，保留v3与原文件。
