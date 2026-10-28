@@ -1,0 +1,27 @@
+{
+  "checks": {
+    "make_base_unchanged": true,
+    "receiver_config_unchanged": true,
+    "branch_candidates_unchanged": true,
+    "distinct_indices_unchanged": true,
+    "prepare_frames_unchanged": true,
+    "fsm_spectrum_unchanged": true,
+    "fsm_score_unchanged": true,
+    "coordinate_grid_unchanged": true,
+    "export_figures_unchanged": true,
+    "make_gold_unchanged": true,
+    "mseq_unchanged": true,
+    "first_layer_unchanged": true,
+    "no_continuous_optimizer_call": true,
+    "one_case": true,
+    "one_receiver_call": true,
+    "fixed_noise_formula": true,
+    "numeric_before_figures": true,
+    "reference_arithmetic": true,
+    "snr_conversion": true
+  },
+  "target_raw_sample_snr_db": -27.934216851622352,
+  "observation_reference_s": 0.049999375,
+  "native_matlab_executed": false,
+  "note": "Static equivalence and reference/noise algebra only; no waveform estimation or MATLAB graphics executed."
+}
