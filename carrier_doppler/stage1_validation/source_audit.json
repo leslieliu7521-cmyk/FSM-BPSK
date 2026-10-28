@@ -1,0 +1,24 @@
+{
+  "source_sha256": "43b164c3ac5074b23c507442bfda13b015a816eba2c94f3536789a0216dd58ad",
+  "source_lines": 739,
+  "matlab_native_executed": false,
+  "default_150_experiment_executed": false,
+  "continuous_optimizer_call_count": 0,
+  "structural_checks": 55,
+  "python_checks": 105,
+  "python_model_total_seconds": 3.0237602759989386,
+  "python_mean_profile_seconds": {
+    "reference_generation_s": 0.0357041363343645,
+    "reference_confirmation_s": 0.0750184673336965,
+    "cached_generation_s": 0.026796870333782863,
+    "cached_confirmation_s": 0.07660421166595673,
+    "linear_shared_prep_s": 0.030265736666478915,
+    "direct_prep_s": 0.047896976000629365,
+    "generation_share_s": 0.01575076283309803
+  },
+  "matlab_default_150_runtime_estimate_seconds": null,
+  "original_rate700_sha256": "5ad4cbcce57acd97225d1b4be5483590c7db718158d456c551405324423c596b",
+  "original_v4_sha256": "877e76bda6b49dd45e9da0cc20c0a6e02282217140aeb474f012fec2d0648696",
+  "numpy_version": "2.3.5",
+  "python_version": "3.12.14"
+}
