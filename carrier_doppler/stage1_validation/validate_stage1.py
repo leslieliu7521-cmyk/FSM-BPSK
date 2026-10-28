@@ -31,7 +31,7 @@ def structural():
  for name in ['branch_candidates','distinct_indices','track_error','error_stats','wilson','make_gold','mseq']:
   check('original_'+name,function_text(SOURCE,name)==function_text(old,name))
  check('no_continuous_optimizer_calls',not re.search(r'\b(?:fminsearch|fminunc|fmincon|refine_objective)\s*\(',SOURCE))
- for token in ["'trials',50","'ebN0',[-10 -7 -4]","'durations',.1","'rates',700","'makePlot',false",
+ for token in ["'trials',50","'ebN0',[-10 -7 -4]","'durations',.1","'rates',700","'makePlot',true",
                "'windowComparison',false","'rateComparison',false","'bandwidthComparison',false",
                "'syncComparison',false","'candidateComparison',false","'fRange',[50e3 150e3]",
                "'rateRange',[-1000 1000]","'rateStep',100","'branchPeaks',3","'confirmCandidates',10",
@@ -47,7 +47,16 @@ def structural():
  check('no_repeated_700','rates=unique([rates 650 700 750]' in function_text(SOURCE,'make_conditions'))
  check('no_truth_window_selection','bestWindow' not in SOURCE)
  check('coherence_data_only','abs(sum(e.frameSequence))/denominator' in SOURCE)
- check('numeric_save_before_plot',SOURCE.index("atomic_save(state,fullfile(outputDir,'results.mat'))",SOURCE.index('state.trials=trial_table'))<SOURCE.index('state.plotExport=export_summary_plot'))
+ check('numeric_save_before_plot',SOURCE.index("atomic_save(state,fullfile(outputDir,'results.mat'))",SOURCE.index('state.trials=trial_table'))<SOURCE.index('state.plotExport=export_all_plots'))
+ backup=(ROOT/'FSM_BPSK_stage1_700_metrics.m').read_text()
+ for name in ['stage1_receiver','stage1_reference','confirm_select','fsm_spectrum','fsm_score','evaluate_record','summarize_conditions']:
+  check('plots_preserve_'+name,function_text(SOURCE,name)==function_text(backup,name))
+ check('simulation_default_enabled',"'simulationPlots',true" in SOURCE)
+ check('nine_png_outputs','for number=1:8' in function_text(SOURCE,'export_all_plots'))
+ check('demo_does_not_run_estimator','stage1_receiver(' not in function_text(SOURCE,'rebuild_plot_demo'))
+ check('demo_uses_saved_estimate','e=state.records{k,trial}.search' in SOURCE)
+ check('plots_only_does_not_save_statistics',"save(fullfile(plotDir,'plot_report.mat'),'plotReport','sourceResults')" in SOURCE)
+ check('local_spectrum_disclaimer','不是独立全先验捕获证明' in SOURCE)
  check('print_numeric_figure_fallback',"print(number,filename,'-dpng','-r150')" in SOURCE)
  check('exact_score_not_replaced_by_square','cross=Xp.*conj(Xm)' in SOURCE and 'y.^2' not in SOURCE)
  check('count_debug100_full1000',"opts.trials=100;" in SOURCE and 'opts.trials=1000;' in SOURCE)

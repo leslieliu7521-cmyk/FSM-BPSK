@@ -6,11 +6,12 @@
 % 直接运行：run('FSM_BPSK_stage1_700.m')；需要MATLAB R2018b+及Signal Processing Toolbox。
 % 自定义：stage1_options=struct('trials',100,'makePlot',true); run(...)
 % 恢复：stage1_options=struct('resumeFile','实际目录/checkpoint.mat'); run(...)
-% 不保存高采样率波形；默认不画图/不保存FIG，不做真值辅助窗长选择。
+% 恢复原直观仿真图，默认导出9张PNG，不保存FIG或整条高采样率波形。
+% 绘图在数值保存后进行，仅从种子重建一个示例，不重跑估计，不做真值辅助选窗。
 clearvars -except stage1_options; clc;
 if ~exist('stage1_options','var'); stage1_options=struct(); end
 sourceText=fileread([mfilename('fullpath') '.m']);
-version='FSM_stage1_700_compact_20261028_1';
+version='FSM_stage1_700_plots_20261028_2';
 
 %% 一、保持原信号参数、Eb/N0约定、固定先验、离散搜索定义
 cfg=struct('Rb',1e5,'Rc',31e5,'fs',24.8e6,'fc',1e5,'longT',.1, ...
@@ -21,9 +22,9 @@ cfg=struct('Rb',1e5,'Rc',31e5,'fs',24.8e6,'fc',1e5,'longT',.1, ...
 opts=struct('mode','compact','trials',50,'ebN0',[-10 -7 -4],'durations',.1,'rates',700, ...
     'seed',20261014,'windowComparison',false,'rateComparison',false, ...
     'syncComparison',false,'bandwidthComparison',false,'candidateComparison',false, ...
-    'makePlot',false,'runNoiseless',true,'verifyOptimization',true, ...
+    'makePlot',true,'simulationPlots',true,'runNoiseless',true,'verifyOptimization',true, ...
     'checkpointEveryTrials',10,'maxNewBaseTrials',Inf,'failureDiagnosticsPerCondition',2, ...
-    'saveFrameSequence',false);
+    'saveFrameSequence',false,'plotFile','');
 keys=fieldnames(stage1_options);
 for ii=1:numel(keys)
     assert(isfield(opts,keys{ii}) || strcmp(keys{ii},'resumeFile'),'未知选项：%s',keys{ii});
@@ -44,6 +45,24 @@ assert(opts.maxNewBaseTrials>=1 && (isinf(opts.maxNewBaseTrials) || opts.maxNewB
 assert(opts.failureDiagnosticsPerCondition>=0 && opts.failureDiagnosticsPerCondition==floor(opts.failureDiagnosticsPerCondition));
 assert(exist('resample','file')~=0,'需要Signal Processing Toolbox的resample。');
 
+%% 只绘图入口：兼容先前第一层results.mat，不重算试验/不改原统计文件
+if ~isempty(opts.plotFile)
+    loaded=load(opts.plotFile,'state'); plotState=loaded.state;
+    assert(isfield(plotState,'continuousRefinementCalls') && plotState.continuousRefinementCalls==0 ...
+        && isfield(plotState,'trials'),'仅接受第一层版本的results.mat。');
+    assert(any(strcmp(plotState.version,{'FSM_stage1_700_compact_20261028_1',version})), ...
+        '不支持的结果版本，不将其他算法结果当作第一层。');
+    plotState.opts.makePlot=true; plotState.opts.simulationPlots=opts.simulationPlots;
+    parent=fileparts(opts.plotFile); if isempty(parent); parent=pwd; end
+    plotDir=unique_directory(fullfile(parent,['simulation_plots_' datestr(now,'yyyymmdd_HHMMSS')])); mkdir(plotDir);
+    plotReport=export_all_plots(plotState,plotDir);
+    sourceResults=opts.plotFile; %#ok<NASGU>
+    save(fullfile(plotDir,'plot_report.mat'),'plotReport','sourceResults');
+    fprintf('仅绘图：PNG成功%d/失败%d，目录%s；原数值文件未改写。\n', ...
+        plotReport.success,plotReport.failure,plotDir);
+    return;
+end
+
 %% 二、配置/随机种子/完成标记检查点；科学配置不能混合恢复
 if isfield(opts,'resumeFile') && ~isempty(opts.resumeFile)
     loaded=load(opts.resumeFile,'state'); state=loaded.state;
@@ -53,12 +72,12 @@ if isfield(opts,'resumeFile') && ~isempty(opts.resumeFile)
     supplied=fieldnames(stage1_options);
     for ii=1:numel(supplied)
         key=supplied{ii};
-        if ~ismember(key,{'resumeFile','makePlot','checkpointEveryTrials','maxNewBaseTrials'})
+        if ~ismember(key,{'resumeFile','makePlot','simulationPlots','checkpointEveryTrials','maxNewBaseTrials'})
             assert(isfield(saved,key) && isequaln(stage1_options.(key),saved.(key)), ...
                 '恢复时不能更改科学选项%s，请另建实验。',key);
         end
     end
-    for ii={'makePlot','checkpointEveryTrials','maxNewBaseTrials'}
+    for ii={'makePlot','simulationPlots','checkpointEveryTrials','maxNewBaseTrials'}
         key=ii{1}; if isfield(stage1_options,key); saved.(key)=opts.(key); end
     end
     opts=saved; cfg=state.cfg; state.opts=opts; rng(state.rngState);
@@ -181,14 +200,14 @@ for trialID=1:opts.trials
     end
 end
 
-%% 四、数值先保存，最后可选一幅汇总PNG；关闭图窗/导出失败不影响统计
+%% 四、数值先保存，再导出汇总与仿真PNG；关闭图窗/导出失败不影响统计
 state.trials=trial_table(state); state.summary=summarize_conditions(state);
 state.complete=all(state.done(:)); state.rngState=rng; state.wallSeconds=oldWall+toc(runClock);
 atomic_save(state,fullfile(outputDir,'results.mat'));
 atomic_save(state,fullfile(outputDir,'checkpoint.mat'));
 state.csvExport=export_tables(state,outputDir);
 state.plotExport=struct('success',0,'failure',0,'message','Disabled');
-if opts.makePlot; state.plotExport=export_summary_plot(state,outputDir); end
+if opts.makePlot; state.plotExport=export_all_plots(state,outputDir); end
 try
     atomic_save(state,fullfile(outputDir,'results.mat'));
     atomic_save(state,fullfile(outputDir,'checkpoint.mat'));
@@ -736,4 +755,189 @@ function report=internal_checks(c)
     report=struct('Passed',true,'ContinuousRefinementCalls',0,'DefaultConditions',3, ...
         'RateComparisonNoDuplicate700',true,'CommonReference',true,'CandidateCacheEquality',true, ...
         'FailureStatistics',true,'Scope','Native only when this MATLAB entry actually runs');
+end
+
+%% 十三、恢复直观系统仿真图：数据保存后绘制，不重新选择候选或运行估计
+function report=export_all_plots(state,folder)
+    report=export_summary_plot(state,folder); report.details={};
+    if ~state.opts.simulationPlots; return; end
+    demo=[]; demoError='';
+    try; demo=rebuild_plot_demo(state);
+    catch ME; demoError=ME.message; end
+    Q=plot_reference_rows(state); S=state.summary;
+    % 每幅独立try/catch，任一图窗关闭/导出失败仅记数，不中止其他图或数值保存。
+    for number=1:8
+        h=[];
+        try
+            h=figure('Color','w','Name',sprintf('FSM stage1 simulation %d',number));
+            switch number
+                case 1
+                    assert(~isempty(demo),'示例重建不可用：%s',demoError);
+                    values={demo.bits,demo.spread,demo.tx,demo.clean,demo.rx,demo.despread};
+                    labels={'随机信息比特','Gold扩频与采样','实通带BPSK发送', ...
+                        '700Hz/s信道无噪声输出','含噪接收信号','已知PN解扩后的信号片段'};
+                    labels{4}=sprintf('信道无噪声输出：a=%gHz/s',demo.condition.RateTruth);
+                    for j=1:6
+                        subplot(3,2,j); plot(demo.t_us,values{j}); grid on;
+                        xlabel('片段时间(us)'); title(labels{j});
+                    end
+                case 2
+                    assert(~isempty(demo) && ~isempty(demo.spectrum),'无有效局部循环谱：%s',demoError);
+                    surf(demo.fAxis/1e3,demo.alphaAxis/1e3,abs(demo.spectrum),'EdgeColor','none');
+                    xlabel('谱频率f(kHz)'); ylabel('循环频率alpha=2f_c(kHz)'); zlabel('|S_x^alpha(f)|');
+                    view(45,35); colorbar;
+                    title('以第一层估计为中心的局部FSM；不是独立全先验捕获证明');
+                case 3
+                    rates=unique(S.TrueRate_HzPerS,'stable'); durations=unique(S.Duration_ms,'stable');
+                    keep=S.PNPhaseChip==0 & S.LocalPNRatePPM==0 & S.ReceiverFs_Hz==state.cfg.scfFs ...
+                        & S.ConfirmLimit==state.cfg.confirmCandidates;
+                    titles={'f0偏差及样本标准差(Hz)','变化率RMSE(Hz/s)','轨迹RMSE(Hz)','平均计算时间(s)'};
+                    for panel=1:4
+                        subplot(2,2,panel); hold on;
+                        for a=rates(:)'
+                            for t=durations(:)'
+                                q=sortrows(S(keep & S.TrueRate_HzPerS==a & S.Duration_ms==t,:),'EbN0_dB');
+                                if isempty(q); continue; end
+                                label=sprintf('%gms,a=%g',t,a);
+                                switch panel
+                                    case 1; errorbar(q.EbN0_dB,q.F0Bias_Hz,q.F0Std_Hz,'o-','DisplayName',label);
+                                    case 2; plot(q.EbN0_dB,q.RateRMSE_HzPerS,'o-','DisplayName',label);
+                                    case 3; plot(q.EbN0_dB,q.TrackRMSE_Hz,'o-','DisplayName',label);
+                                    case 4; plot(q.EbN0_dB,q.MeanCompute_s,'o-','DisplayName',label);
+                                end
+                            end
+                        end
+                        title(titles{panel}); xlabel('信息比特Eb/N0(dB)'); grid on; legend('show','Location','best');
+                    end
+                case 4
+                    assert(~isempty(Q),'无逐次结果。'); finite=isfinite(Q.F0Error_Hz);
+                    subplot(2,2,1); plot(Q.TrialID,Q.TrueF0_Hz/1e3,'k.',Q.TrialID,Q.F0_Hz/1e3,'ro');
+                    xlabel('独立TrialID'); ylabel('共同中点f0(kHz)'); legend('真实','第一层'); grid on;
+                    subplot(2,2,2); plot(Q.TrialID,Q.F0Error_Hz,'.'); yline(20,'r--'); yline(-20,'r--');
+                    xlabel('TrialID'); ylabel('f0误差(Hz)'); grid on;
+                    subplot(2,2,3); histogram(Q.F0Error_Hz(finite)); xlabel('f0误差(Hz)'); grid on;
+                    title(sprintf('非有限%d条不可绘制，仍计入失败和完整样本统计',sum(~finite)));
+                    subplot(2,2,4); bar([height(Q)-sum(Q.F0Success),sum(~Q.Valid),sum(~finite)]);
+                    set(gca,'XTick',1:3,'XTickLabel',{'频率失败','无效输出','非有限频率误差'}); ylabel('试验数'); grid on;
+                    title(sprintf('同一条件N=%d；三类计数存在包含关系',height(Q)));
+                case 5
+                    assert(~isempty(Q),'无逐次结果。');
+                    subplot(2,2,1); plot(Q.TrialID,Q.EstimatedRate_HzPerS,'o'); hold on;
+                    plot(Q.TrialID,Q.TrueRate_HzPerS,'k--'); xlabel('TrialID'); ylabel('变化率(Hz/s)'); legend('第一层','真实'); grid on;
+                    subplot(2,2,2); ok=isfinite(Q.RateError_HzPerS); histogram(Q.RateError_HzPerS(ok));
+                    xlabel('变化率误差(Hz/s)'); title(sprintf('非有限%d条另计',sum(~ok))); grid on;
+                    subplot(2,2,3); plot(Q.TrialID,Q.TrackRMSE_Hz,'o',Q.TrialID,Q.TrackMaxError_Hz,'x');
+                    xlabel('TrialID'); ylabel('整段轨迹误差(Hz)'); legend('RMSE','最大绝对误差'); grid on;
+                    subplot(2,2,4); assert(~isempty(demo),'无轨迹示例：%s',demoError);
+                    u=linspace(-(demo.n-1)/(2*demo.condition.ScfFs),(demo.n-1)/(2*demo.condition.ScfFs),401);
+                    dt=demo.metrics.LocalReference_s-demo.metrics.CommonReference_s+u;
+                    truth=demo.metrics.TrueF0_Hz+demo.condition.RateTruth*dt;
+                    fitted=demo.metrics.F0_Hz+demo.metrics.EstimatedRate_HzPerS*dt;
+                    plot(1000*(u-u(1)),truth-state.cfg.fc,'k',1000*(u-u(1)),fitted-state.cfg.fc,'r--');
+                    xlabel('段内时间(ms)'); ylabel('相对标称载波的频移(Hz)'); legend('真实轨迹','第一层轨迹'); grid on;
+                case 6
+                    % 原来窗长图恢复；默认仅100ms一个点，不补造其他窗长实验。
+                    assert(~isempty(Q),'无逐次结果。');
+                    base=Q(1,:); use=S.EbN0_dB==base.EbN0_dB & S.TrueRate_HzPerS==base.TrueRate_HzPerS ...
+                        & S.PNPhaseChip==0 & S.LocalPNRatePPM==0 & S.ReceiverFs_Hz==state.cfg.scfFs ...
+                        & S.ConfirmLimit==state.cfg.confirmCandidates;
+                    q=sortrows(S(use,:),'Duration_ms');
+                    subplot(1,2,1); errorbar(q.Duration_ms,q.F0SuccessRate,q.F0SuccessRate-q.F0Lo,q.F0Hi-q.F0SuccessRate,'o-');
+                    for j=1:height(q); text(q.Duration_ms(j),q.F0SuccessRate(j),sprintf(' N=%d',q.Count(j))); end
+                    xlabel('窗长(ms)'); ylabel('f0成功率及Wilson95%'); ylim([0 1.1]); grid on;
+                    title('默认仅100ms；其他窗长须显式开启');
+                    subplot(1,2,2); plot(q.Duration_ms,q.TrackRMSE_Hz,'o-',q.Duration_ms,q.TrackMaxError_Hz,'s-');
+                    xlabel('窗长(ms)'); ylabel('轨迹误差(Hz)'); legend('完整样本RMSE','最大绝对误差'); grid on;
+                case 7
+                    assert(~isempty(demo),'无候选示例：%s',demoError); e=demo.search;
+                    subplot(1,2,1); hold on;
+                    scatter(e.generated(:,1)/1e3,e.generated(:,2),18,[.7 .7 .7],'filled');
+                    scatter(e.candidates(:,1)/1e3,e.candidates(:,2),25,'b');
+                    ok=e.candidates(:,8)>0; scatter(e.candidates(ok,1)/1e3,e.candidates(ok,2),30,'r','filled');
+                    plot(e.fLocal/1e3,e.rate,'gx','MarkerSize',12,'LineWidth',2);
+                    trueLocal=demo.metrics.TrueF0_Hz+demo.condition.RateTruth*(demo.metrics.LocalReference_s-demo.metrics.CommonReference_s);
+                    plot(trueLocal/1e3,demo.condition.RateTruth,'k+','MarkerSize',12);
+                    xlim(state.cfg.fRange/1e3); ylim(state.cfg.rateRange); grid on;
+                    xlabel('局部窗中点频率(kHz)'); ylabel('变化率(Hz/s)');
+                    legend('生成','去重','确认','第一层选择','真值仅评价','Location','best'); title('全先验候选分布，不以真值选择');
+                    subplot(1,2,2); semilogy(e.candidates(:,6),e.candidates(:,5),'o');
+                    xlabel('去重后近似指标排名'); ylabel('精确FSM指标'); grid on;
+                    title(sprintf('确认%d/%d候选；未确认分数为NaN',sum(ok),height_array(e.candidates)));
+                case 8
+                    assert(~isempty(Q) && ~isempty(demo),'无一致性数据：%s',demoError);
+                    subplot(1,2,1); ok=isfinite(Q.FrameCoherence) & isfinite(Q.F0Error_Hz);
+                    scatter(Q.FrameCoherence(ok),abs(Q.F0Error_Hz(ok)),25,'filled');
+                    xlabel('补偿后帧间复循环谱一致性rho'); ylabel('|f0误差|(Hz)'); grid on;
+                    title(sprintf('诊断关系，不预设有效；非有限%d条仍保留统计',sum(~ok)));
+                    subplot(1,2,2); q=demo.frameSequence;
+                    plot(1:numel(q),real(q),1:numel(q),imag(q));
+                    xlabel('帧编号'); ylabel('所选第一层参数补偿后的复循环谱q_j'); legend('实部','虚部'); grid on;
+                    title('仅用接收数据与第一层估计补偿');
+            end
+            write_png(h,fullfile(folder,sprintf('simulation_%02d.png',number)));
+            report.success=report.success+1;
+            report.details{end+1}=sprintf('simulation_%02d.png: success',number);
+        catch ME
+            report.failure=report.failure+1; report.details{end+1}=sprintf('simulation_%02d: %s',number,ME.message);
+            warning('FSM:SimulationPNG','图%d失败，数值已保存：%s',number,ME.message);
+        end
+    end
+end
+function q=plot_reference_rows(state)
+    q=table(); T=state.trials; if isempty(T); return; end
+    ids=find(any(state.done,2));
+    baseline=arrayfun(@(k) state.conditions(k).RateTruth==700 && state.conditions(k).PNPhaseChip==0 ...
+        && state.conditions(k).LocalPNRatePPM==0 && state.conditions(k).ScfFs==state.cfg.scfFs ...
+        && state.conditions(k).ConfirmCandidates==state.cfg.confirmCandidates,ids);
+    if any(baseline); ids=ids(baseline); end
+    duration=max([state.conditions(ids).Duration]); ids=ids([state.conditions(ids).Duration]==duration);
+    [~,j]=min(abs([state.conditions(ids).EbN0]+7)); k=ids(j);
+    q=T(T.ConditionIndex==k,:); % 预先按配置选示例，不按真实误差挑好看的记录
+end
+function d=rebuild_plot_demo(state)
+    % 仅按种子重建一个既有结果的示例；不重复搜索，不更改任何统计估计。
+    Q=plot_reference_rows(state); assert(~isempty(Q),'没有已完成的试验。');
+    m=Q(1,:); k=m.ConditionIndex; trial=m.TrialID; current=state.conditions(k);
+    c=state.cfg; x=make_context(c); b=generate_base(c,x,m.BaseSeed);
+    clean=b.spread.*cos(2*pi*(c.fc+b.fd)*x.t+pi*current.RateTruth*x.t.^2+b.phase);
+    variance=mean(clean.^2)*c.fs/(2*c.Rb*10^(current.EbN0/10));
+    pn=local_pn(x,current.PNPhaseChip,current.LocalPNRatePPM,c);
+    [up,down]=rat(current.ScfFs/c.fs,1e-12);
+    cl=resample((clean.*pn)',up,down,c.filterN,c.filterBeta);
+    nl=resample((b.noise.*pn)',up,down,c.filterN,c.filterBeta);
+    n=round(current.Duration*current.ScfFs); first=floor((numel(cl)-n)/2)+1;
+    y=cl(first:first+n-1)+sqrt(variance)*nl(first:first+n-1);
+    e=state.records{k,trial}.search; r=receiver_config(c,current);
+    ns=min(x.N,round(60e-6*c.fs)); idx=1:ns;
+    d=struct('condition',current,'metrics',table2struct(m),'search',e,'n',n, ...
+        't_us',(idx-1)/c.fs*1e6,'bits',b.spread(idx).*x.pn(idx), ...
+        'spread',b.spread(idx),'tx',b.spread(idx).*cos(2*pi*c.fc*x.t(idx)), ...
+        'clean',clean(idx),'rx',clean(idx)+sqrt(variance)*b.noise(idx), ...
+        'despread',(clean(idx)+sqrt(variance)*b.noise(idx)).*pn(idx), ...
+        'spectrum',[],'frameSequence',[]);
+    if e.valid
+        p=frame_plan(numel(y),r,true); frames=bsxfun(@times,y(p.indices),p.w);
+        frequencies=linspace(max(r.fRange(1),e.fLocal-50),min(r.fRange(2),e.fLocal+50),41);
+        S=zeros(numel(frequencies),r.L); kernel=ones(r.smoothingBins,1)/r.smoothingBins;
+        for j=1:numel(frequencies)
+            spec=fsm_spectrum(frames,p.tc,frequencies(j),e.rate,r,p.w);
+            S(j,:)=conv(spec,kernel,'same').'; % 复数频率平滑后，绘图才取模
+        end
+        [~,d.frameSequence]=fsm_spectrum(frames,p.tc,e.fLocal,e.rate,r,p.w);
+        d.fAxis=(-r.L/2:r.L/2-1)*r.scfFs/r.L; d.alphaAxis=2*frequencies; d.spectrum=S;
+    end
+end
+function write_png(h,path)
+    assert(~isempty(h) && isgraphics(h,'figure'),'图窗不存在或已经关闭。');
+    number=get(h,'Number'); exported=false;
+    if exist('exportgraphics','file')~=0 || exist('exportgraphics','builtin')~=0
+        try; exportgraphics(h,path,'Resolution',150); exported=true;
+        catch; exported=false; end
+    end
+    if ~exported
+        assert(isgraphics(h,'figure'),'图窗导出期间被关闭。'); print(number,path,'-dpng','-r150');
+    end
+end
+function n=height_array(A)
+    n=size(A,1);
 end

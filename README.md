@@ -1,6 +1,6 @@
 # FSM-BPSK
 
-第一层精简基线：[完整程序](carrier_doppler/FSM_BPSK_stage1_700.m)、[下载交付包](FSM_BPSK_stage1_700_delivery.zip)、[运行/恢复与选项](carrier_doppler/FSM_stage1_运行说明.md)、[验证报告](carrier_doppler/FSM_stage1_验证报告.md)。默认700Hz/s、100ms、三个Eb/N0、50基础试验/条件（150条输出），完全关闭连续精搜索，默认不画图。当前无MATLAB原生结果，Python检查不能代替正式统计。
+第一层精简基线：[完整程序](carrier_doppler/FSM_BPSK_stage1_700.m)、[下载交付包](FSM_BPSK_stage1_700_delivery.zip)、[运行/恢复与选项](carrier_doppler/FSM_stage1_运行说明.md)、[验证报告](carrier_doppler/FSM_stage1_验证报告.md)。默认700Hz/s、100ms、三个Eb/N0、50基础试验/条件（150条输出），完全关闭连续精搜索，默认恢复9张仿真PNG；支持从旧results.mat只绘图、不重跑试验。当前无MATLAB原生结果，Python检查不能代替正式统计。
 
 固定变化率+700Hz/s：[下载完整实验包](FSM_BPSK_rate700_delivery.zip)，[完整MATLAB脚本](carrier_doppler/FSM_BPSK_rate700.m)，[运行说明](carrier_doppler/FSM_700Hz每秒实验说明.md)。接收先验仍为±1000Hz/s，主观测100ms，正式每个含噪条件1000次；当前无MATLAB原生统计结果。
 

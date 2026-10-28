@@ -1,6 +1,6 @@
 # 第一层700Hz/s基线运行说明
 
-单文件包含全部MATLAB局部函数，需要MATLAB R2018b+和Signal Processing Toolbox。无需Parallel Computing Toolbox。原文件保留。
+单文件包含全部MATLAB局部函数，需要MATLAB R2018b+和Signal Processing Toolbox。无需Parallel Computing Toolbox。原文件保留，先前不画图版本另存为`FSM_BPSK_stage1_700_metrics.m`。
 
 ## 一条直接运行指令
 
@@ -10,9 +10,9 @@
 run('FSM_BPSK_stage1_700.m')
 ```
 
-新工作区默认700Hz/s、100ms、Eb/N0=[−10 −7 −4]dB、每条件50次（150条含噪统计输出），先少量无噪声检查。默认不画图，不存FIG/波形。若工作区保留以前的`stage1_options`，先清除它，或明确赋新结构，避免沿用上次设置。
+新工作区默认700Hz/s、100ms、Eb/N0=[−10 −7 −4]dB、每条件50次（150条含噪统计输出），先少量无噪声检查。默认恢复9张直观图并导出PNG，不存FIG/整条波形。若工作区保留以前的`stage1_options`，先清除它，或明确赋新结构，避免沿用上次设置。
 
-## 更改SNR、次数和可选单图
+## 更改SNR、次数和绘图开关
 
 ```matlab
 stage1_options=struct('ebN0',[-10 -8 -7 -6 -4],'trials',50,'makePlot',true);
@@ -84,7 +84,8 @@ run('FSM_BPSK_stage1_700.m');
 - `summary.csv`：每条件实际Count/计划Count/模式、Wilson95%、频率与率RMSE/偏差/样本标准差、绝对误差中位数/P90/P95、失败/无效、轨迹和耗时。
 - `noiseless.csv`：少量离网格/分支交界检查与率网格误差；默认率700，开启率对照时覆盖650/700/750。
 - `results.mat`、`checkpoint.mat`：配置、源文本、条件、种子、完成标记、逐次候选和必要诊断；不含高采样率波形。
-- `summary.png`：仅`makePlot=true`时生成一幅f0成功率/置信区间/Count及f0 RMSE图，不存FIG。导图失败不会破坏先保存的MAT。
+- `summary.png`：f0成功率/置信区间/Count及f0 RMSE。
+- `simulation_01.png`至`simulation_08.png`：链路波形、局部循环谱、偏差/率/轨迹/耗时、逐次f0与分布/失败、率估计与轨迹、窗长对照、全先验候选、帧间一致性分析。全部在MAT数值保存后生成；默认不存FIG。
 
 ```matlab
 L=load('实际输出目录/results.mat'); s=L.state;
@@ -109,3 +110,23 @@ assert(s.continuousRefinementCalls==0);
 每窗一致性摘要保存在所有逐次输出；需要每个试验的复谱序列时，新实验显式设置`saveFrameSequence=true`。默认仅少量失败诊断保留完整序列。
 
 后续分析应直接使用逐次CSV计算分布、窗口配对变化、一致性与误差关系。没有真值辅助选窗结果或自适应性能曲线；一致性只作分析，不预设有效。50次/条件及其尾部分位数是初步观察，不能因样本成功率高就承诺总体超过90%。
+
+## 恢复原仿真图（本次更新）
+
+新文件默认`makePlot=true, simulationPlots=true`，统计仍是150条输出。明确开启：
+
+```matlab
+stage1_options=struct('makePlot',true,'simulationPlots',true);
+run('FSM_BPSK_stage1_700.m');
+```
+
+已有旧版第一层results.mat时，只绘图、不重跑估计、不覆盖原统计：
+
+```matlab
+stage1_options=struct('plotFile','实际目录/results.mat');
+run('FSM_BPSK_stage1_700.m');
+```
+
+图片存入原结果目录下新建的`simulation_plots_时间戳`，另存小型plot_report.mat。只重建一个预先按配置选择的试验（优先700Hz/s、100ms、−7dB、最早TrialID），不按真实误差挑选示例。局部循环谱以已保存的第一层估计为中心，不能当独立捕获证明。波形只显示约60us短片段，整条高采样率波形不写入MAT。每图独立计数，关闭任一图窗或单图导出失败不影响原数值。
+
+只要原单幅汇总图：`makePlot=true, simulationPlots=false`；完全不画图：`makePlot=false`。默认窗长图仅100ms一个点，需要四窗长才开启windowComparison，不补造数据。新版本检查点不能与旧源码混合；旧检查点请用保留的metrics脚本恢复，得到results.mat后再调用只绘图入口。MATLAB原生图形仍未在本环境验证。

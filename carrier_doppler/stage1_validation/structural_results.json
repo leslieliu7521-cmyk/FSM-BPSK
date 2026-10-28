@@ -16,7 +16,7 @@
     "parameter_'ebN0',[-10 -7 -4]": "PASS",
     "parameter_'durations',.1": "PASS",
     "parameter_'rates',700": "PASS",
-    "parameter_'makePlot',false": "PASS",
+    "parameter_'makePlot',true": "PASS",
     "parameter_'windowComparison',false": "PASS",
     "parameter_'rateComparison',false": "PASS",
     "parameter_'bandwidthComparison',false": "PASS",
@@ -40,6 +40,19 @@
     "no_truth_window_selection": "PASS",
     "coherence_data_only": "PASS",
     "numeric_save_before_plot": "PASS",
+    "plots_preserve_stage1_receiver": "PASS",
+    "plots_preserve_stage1_reference": "PASS",
+    "plots_preserve_confirm_select": "PASS",
+    "plots_preserve_fsm_spectrum": "PASS",
+    "plots_preserve_fsm_score": "PASS",
+    "plots_preserve_evaluate_record": "PASS",
+    "plots_preserve_summarize_conditions": "PASS",
+    "simulation_default_enabled": "PASS",
+    "nine_png_outputs": "PASS",
+    "demo_does_not_run_estimator": "PASS",
+    "demo_uses_saved_estimate": "PASS",
+    "plots_only_does_not_save_statistics": "PASS",
+    "local_spectrum_disclaimer": "PASS",
     "print_numeric_figure_fallback": "PASS",
     "exact_score_not_replaced_by_square": "PASS",
     "count_debug100_full1000": "PASS",
@@ -69,6 +82,6 @@
     "Only a few shared base records; not a success-rate study.",
     "SciPy/MATLAB FIR/random streams/tie handling are not assumed identical."
   ],
-  "elapsed_s": 0.018889664999733213,
-  "source_sha256": "43b164c3ac5074b23c507442bfda13b015a816eba2c94f3536789a0216dd58ad"
+  "elapsed_s": 0.02880343700235244,
+  "source_sha256": "b38b71157b0524d82dd8000ed3905e62edafc23ddf2de0e6404cebfefcbc6e5d"
 }
