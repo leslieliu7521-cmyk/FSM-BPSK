@@ -1,0 +1,31 @@
+{
+  "checks": {
+    "matlab_syntax_tree_no_errors": true,
+    "fsm_receiver_unchanged": true,
+    "receiver_config_unchanged": true,
+    "branch_candidates_unchanged": true,
+    "distinct_indices_unchanged": true,
+    "prepare_frames_unchanged": true,
+    "fsm_spectrum_unchanged": true,
+    "fsm_score_unchanged": true,
+    "make_base_unchanged": true,
+    "make_gold_unchanged": true,
+    "mseq_unchanged": true,
+    "export_figures_unchanged": true,
+    "default_50": true,
+    "independent_seeds": true,
+    "no_optimizer": true,
+    "invalid_rmse_rule": true,
+    "no_filter_before_stats": true,
+    "numeric_before_plot": true,
+    "wilson_all_success": true,
+    "wilson_all_failure": true,
+    "inclusive_threshold_full_denominator": true,
+    "sample_standard_deviation": true,
+    "unique_functions": true
+  },
+  "native_matlab_executed": false,
+  "three_trial_smoke_executed": false,
+  "fifty_trial_results_generated": false,
+  "note": "Parser/static checks and independently evaluated statistics formulas; not MATLAB execution."
+}
